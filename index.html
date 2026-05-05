@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swing Trade Scanner v3</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e8e8e8; padding: 20px; min-height: 100vh; }
+  .scanner { max-width: 1200px; margin: 0 auto; }
+  .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; border-bottom: 1px solid #222; padding-bottom: 20px; }
+  .title { font-size: 22px; font-weight: 600; color: #fff; letter-spacing: -0.5px; }
+  .subtitle { font-size: 13px; color: #666; margin-top: 4px; }
+  .live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #4ade80; margin-right: 6px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .btn { padding: 8px 16px; font-size: 13px; border-radius: 8px; cursor: pointer; border: 1px solid #333; background: #1a1a1a; color: #e8e8e8; transition: all 0.15s; font-family: inherit; }
+  .btn:hover { background: #252525; border-color: #444; }
+  .btn.primary { background: #fff; color: #000; border-color: #fff; font-weight: 500; }
+  .btn.primary:hover { background: #e8e8e8; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  select { font-size: 13px; padding: 8px 12px; border-radius: 8px; border: 1px solid #333; background: #1a1a1a; color: #e8e8e8; cursor: pointer; font-family: inherit; }
+  .metrics { display: grid; grid-template-columns: repeat(5,1fr); gap: 10px; margin-bottom: 20px; }
+  .metric { background: #111; border: 1px solid #222; border-radius: 10px; padding: 14px 16px; }
+  .metric-label { font-size: 11px; color: #555; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .metric-value { font-size: 22px; font-weight: 600; color: #fff; }
+  .metric-value.green { color: #4ade80; }
+  .metric-value.amber { color: #fb923c; }
+  .metric-value.small { font-size: 13px; line-height: 1.5; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
+  .filter-label { font-size: 12px; color: #555; margin-right: 2px; }
+  .filter-btn { padding: 5px 14px; font-size: 12px; border-radius: 20px; cursor: pointer; border: 1px solid #2a2a2a; background: #111; color: #666; transition: all 0.15s; font-family: inherit; }
+  .filter-btn:hover { border-color: #444; color: #aaa; }
+  .filter-btn.active { border-color: #555; color: #fff; background: #222; }
+  .progress-wrap { margin-bottom: 16px; display: none; }
+  .progress-bar { height: 3px; background: #222; border-radius: 2px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(to right,#4ade80,#60a5fa); width: 0%; transition: width 0.4s; }
+  .progress-text { font-size: 12px; color: #555; margin-top: 6px; }
+  .error-box { border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; font-size: 13px; display: none; line-height: 1.6; }
+  .error-box.warn { background: #1a0a0a; border: 1px solid #5a2020; color: #f87171; }
+  .error-box.ok { background: #0a1a0a; border: 1px solid #1a4a2a; color: #4ade80; }
+  .results-header { display: grid; grid-template-columns: 1.6fr 0.9fr 0.8fr 0.8fr 0.8fr 1.5fr 1.8fr 90px; gap: 8px; padding: 0 14px 10px; font-size: 11px; color: #444; text-transform: uppercase; letter-spacing: 0.08em; border-bottom: 1px solid #1e1e1e; margin-bottom: 8px; }
+  .stock-card { display: grid; grid-template-columns: 1.6fr 0.9fr 0.8fr 0.8fr 0.8fr 1.5fr 1.8fr 90px; gap: 8px; align-items: center; padding: 12px 14px; border-radius: 10px; border: 1px solid #1e1e1e; background: #111; margin-bottom: 6px; transition: border-color 0.15s; cursor: pointer; }
+  .stock-card:hover { border-color: #333; }
+  .stock-card.high { border-left: 3px solid #4ade80; }
+  .stock-card.medium { border-left: 3px solid #fb923c; }
+  .ticker { font-weight: 600; font-size: 15px; color: #fff; }
+  .company-name { font-size: 11px; color: #555; margin-top: 2px; }
+  .setup-badge { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 11px; font-weight: 500; margin-top: 4px; }
+  .setup-oversold { background:#0a2a1a;color:#4ade80;border:1px solid #1a4a2a; }
+  .setup-breakout { background:#0a1a2a;color:#60a5fa;border:1px solid #1a3a5a; }
+  .setup-ma { background:#2a1a0a;color:#fb923c;border:1px solid #4a3a1a; }
+  .setup-squeeze { background:#1a0a2a;color:#c084fc;border:1px solid #3a1a5a; }
+  .setup-none { background:#1a1a1a;color:#555;border:1px solid #2a2a2a; }
+  .price { font-size: 15px; font-weight: 500; color: #fff; }
+  .change-pos { font-size: 13px; color: #4ade80; }
+  .change-neg { font-size: 13px; color: #f87171; }
+  .rsi-val { font-size: 13px; color: #ccc; }
+  .rsi-bar { height: 3px; background: #222; border-radius: 2px; margin-top: 5px; }
+  .rsi-fill { height: 100%; border-radius: 2px; }
+  .vol-val { font-size: 13px; color: #ccc; }
+  .target-info { font-size: 12px; color: #666; line-height: 1.6; }
+  .target-price { color: #4ade80; font-weight: 500; }
+  .stop-price { color: #f87171; }
+  .score-high { font-size: 16px; font-weight: 600; color: #4ade80; }
+  .score-med { font-size: 16px; font-weight: 600; color: #fb923c; }
+  .save-btn { padding: 5px 10px; font-size: 11px; border-radius: 6px; cursor: pointer; border: 1px solid #2a2a2a; background: #1a1a1a; color: #888; font-family: inherit; transition: all 0.15s; display: block; margin-top: 5px; width: 100%; }
+  .save-btn:hover { border-color:#444;color:#ccc; }
+  .w52-row { display:flex;justify-content:space-between;align-items:center;margin-bottom:4px; }
+  .w52-num { font-size:10px;color:#444; }
+  .w52-badge { display:inline-block;padding:1px 7px;border-radius:8px;font-size:11px;font-weight:600; }
+  .w52-cheap { background:#0a2a1a;color:#4ade80;border:1px solid #1a4a2a; }
+  .w52-mid { background:#2a2a0a;color:#facc15;border:1px solid #4a4a1a; }
+  .w52-exp { background:#2a0a0a;color:#f87171;border:1px solid #4a1a1a; }
+  .w52-bar-track { position:relative;height:5px;background:#1e1e1e;border-radius:3px;margin:4px 0; }
+  .w52-dot { position:absolute;top:50%;width:9px;height:9px;border-radius:50%;transform:translate(-50%,-50%);border:2px solid #0a0a0a; }
+  .w52-pct { font-size:11px;color:#555;text-align:center;margin-top:2px; }
+  .detail-panel { background:#0d0d0d;border:1px solid #222;border-radius:10px;padding:16px;margin:-2px 0 8px;display:none; }
+  .detail-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:14px;margin-bottom:14px; }
+  .detail-label { font-size:11px;color:#444;text-transform:uppercase;letter-spacing:0.08em; }
+  .detail-value { font-size:14px;font-weight:500;color:#ccc;margin-top:3px; }
+  .detail-value.green{color:#4ade80}.detail-value.red{color:#f87171}.detail-value.amber{color:#facc15}
+  .analyze-btn { padding:8px 16px;font-size:13px;border-radius:8px;cursor:pointer;border:1px solid #333;background:#1a1a1a;color:#e8e8e8;font-family:inherit;transition:all 0.15s; }
+  .analyze-btn:hover{background:#252525}
+  .empty-state { text-align:center;padding:60px 20px;color:#444;font-size:14px; }
+  .empty-icon { font-size:36px;margin-bottom:16px; }
+  .history-section { margin-top:32px;border-top:1px solid #1e1e1e;padding-top:24px; }
+  .history-title { font-size:16px;font-weight:500;color:#ccc;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px; }
+  .history-item { display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #1a1a1a;font-size:13px;flex-wrap:wrap;gap:8px; }
+  .history-ticker { font-weight:600;color:#fff;margin-right:8px; }
+  .history-date { color:#444;font-size:11px;margin-left:8px; }
+  .history-stats { display:flex;gap:12px;color:#555;font-size:12px;flex-wrap:wrap;align-items:center; }
+  .no-history { color:#444;font-size:13px;padding:16px 0; }
+  .info-bar { font-size:12px;color:#444;background:#111;border:1px solid #1e1e1e;border-radius:8px;padding:10px 14px;margin-bottom:16px;display:flex;gap:20px;flex-wrap:wrap; }
+  .shimmer { background:#1e1e1e;border-radius:4px;animation:sh 1.5s infinite; }
+  @keyframes sh{0%,100%{opacity:0.3}50%{opacity:0.7}}
+  @media(max-width:800px){
+    .metrics{grid-template-columns:repeat(2,1fr)}
+    .results-header{display:none}
+    .stock-card{grid-template-columns:1fr 1fr;row-gap:10px}
+  }
+</style>
+</head>
+<body>
+<div class="scanner">
+  <div class="header">
+    <div>
+      <div class="title"><span class="live-dot"></span>Swing Trade Scanner — Live Data</div>
+      <div class="subtitle" id="last-scan">Datos reales via Yahoo Finance · Haz clic en "Ejecutar Scan"</div>
+    </div>
+    <div class="controls">
+      <select id="universe-select">
+        <option value="sp500">S&P 500 Top (20 stocks)</option>
+        <option value="nasdaq">Nasdaq Focus (15 stocks)</option>
+        <option value="watchlist" selected>Mi Watchlist (13 stocks)</option>
+      </select>
+      <button class="btn" onclick="clearResults()">Limpiar</button>
+      <button class="btn primary" id="scan-btn" onclick="runScan()">▶ Ejecutar Scan</button>
+    </div>
+  </div>
+
+  <div class="info-bar">
+    <span><b style="color:#4ade80">Barato</b> = 0–35% del rango 52W</span>
+    <span><b style="color:#facc15">Zona media</b> = 35–70%</span>
+    <span><b style="color:#f87171">Caro</b> = 70–100%</span>
+    <span style="color:#555">RSI &lt;35 sobrevendido · RSI &gt;70 sobrecomprado</span>
+  </div>
+
+  <div class="metrics">
+    <div class="metric"><div class="metric-label">Analizados</div><div class="metric-value" id="m-total">—</div></div>
+    <div class="metric"><div class="metric-label">Oportunidades</div><div class="metric-value green" id="m-opps">—</div></div>
+    <div class="metric"><div class="metric-label">Señal Alta</div><div class="metric-value green" id="m-high">—</div></div>
+    <div class="metric"><div class="metric-label">Señal Media</div><div class="metric-value amber" id="m-med">—</div></div>
+    <div class="metric"><div class="metric-label">Setup del día</div><div class="metric-value small" id="m-top">—</div></div>
+  </div>
+
+  <div class="filters">
+    <span class="filter-label">Setup:</span>
+    <button class="filter-btn active" data-f="setup" data-v="all" onclick="setFilter('setup','all',this)">Todos</button>
+    <button class="filter-btn" data-f="setup" data-v="RSI Oversold" onclick="setFilter('setup','RSI Oversold',this)">RSI Oversold</button>
+    <button class="filter-btn" data-f="setup" data-v="Breakout" onclick="setFilter('setup','Breakout',this)">Breakout</button>
+    <button class="filter-btn" data-f="setup" data-v="MA Cross" onclick="setFilter('setup','MA Cross',this)">MA Cross</button>
+    <button class="filter-btn" data-f="setup" data-v="Squeeze" onclick="setFilter('setup','Squeeze',this)">Squeeze</button>
+    <span class="filter-label" style="margin-left:10px;">Fuerza:</span>
+    <button class="filter-btn active" data-f="str" data-v="all" onclick="setFilter('str','all',this)">Todas</button>
+    <button class="filter-btn" data-f="str" data-v="high" onclick="setFilter('str','high',this)">Alta</button>
+    <button class="filter-btn" data-f="str" data-v="medium" onclick="setFilter('str','medium',this)">Media</button>
+    <span class="filter-label" style="margin-left:10px;">52W:</span>
+    <button class="filter-btn active" data-f="val" data-v="all" onclick="setFilter('val','all',this)">Todas</button>
+    <button class="filter-btn" data-f="val" data-v="cheap" onclick="setFilter('val','cheap',this)" style="color:#4ade80">Barato</button>
+    <button class="filter-btn" data-f="val" data-v="mid" onclick="setFilter('val','mid',this)" style="color:#facc15">Zona media</button>
+    <button class="filter-btn" data-f="val" data-v="exp" onclick="setFilter('val','exp',this)" style="color:#f87171">Caro</button>
+  </div>
+
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-text" id="progress-text">Obteniendo datos del mercado...</div>
+  </div>
+
+  <div class="error-box" id="error-box"></div>
+
+  <div id="results-container">
+    <div class="empty-state">
+      <div class="empty-icon">◎</div>
+      <div>Ejecuta el scan para obtener datos reales del mercado</div>
+      <div style="font-size:12px;color:#333;margin-top:8px;">Precios reales · RSI calculado · Rango 52W real · Volumen real</div>
+    </div>
+  </div>
+
+  <div class="history-section">
+    <div class="history-title">
+      <span>Setups guardados</span>
+      <button class="btn" onclick="clearHistory()" style="font-size:12px;padding:5px 12px;">Limpiar historial</button>
+    </div>
+    <div id="history-list"><div class="no-history">Guarda setups para hacer seguimiento.</div></div>
+  </div>
+</div>
+
+<script>
+const UNIVERSES = {
+  sp500: ['NVDA','AMZN','GOOGL','META','MSFT','AAPL','TSLA','JPM','V','MA','JNJ','PG','KO','DIS','NFLX','AMD','COST','WMT','MU','INTC'],
+  nasdaq: ['NVDA','AMZN','GOOGL','META','MSFT','AAPL','TSLA','AMD','NFLX','COST','MRVL','PANW','PLTR','MU','QCOM'],
+  watchlist: ['AMZN','GOOGL','NVDA','CPA','TIGO','LULU','ONON','IBIT','TMUS','SPY','MU','DIS','JPM']
+};
+
+const NAMES = {
+  NVDA:'Nvidia',AMZN:'Amazon',GOOGL:'Alphabet',META:'Meta',MSFT:'Microsoft',AAPL:'Apple',
+  TSLA:'Tesla',JPM:'JPMorgan',V:'Visa',MA:'Mastercard',JNJ:'J&J',PG:'P&G',KO:'Coca-Cola',
+  DIS:'Walt Disney',NFLX:'Netflix',AMD:'AMD',COST:'Costco',WMT:'Walmart',MU:'Micron',
+  INTC:'Intel',MRVL:'Marvell',PANW:'Palo Alto',PLTR:'Palantir',QCOM:'Qualcomm',
+  CPA:'Copa Holdings',TIGO:'Millicom',LULU:'Lululemon',ONON:'On Holding',
+  IBIT:'iShares Bitcoin',TMUS:'T-Mobile',SPY:'S&P 500 ETF'
+};
+
+// Proxy list — tries each in order until one works
+const PROXIES = [
+  t => `https://api.allorigins.win/get?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`)}`,
+  t => `https://corsproxy.io/?${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`)}`,
+  t => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`)}`
+];
+
+let allResults = [];
+let savedHistory = JSON.parse(localStorage.getItem('swing_v3_history') || '[]');
+let filters = { setup:'all', str:'all', val:'all' };
+
+async function fetchYahoo(ticker) {
+  for (let i = 0; i < PROXIES.length; i++) {
+    try {
+      const url = PROXIES[i](ticker);
+      const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!resp.ok) continue;
+      const raw = await resp.json();
+      // allorigins wraps in .contents
+      const data = raw.contents ? JSON.parse(raw.contents) : raw;
+      const result = data?.chart?.result?.[0];
+      if (!result) continue;
+      return result;
+    } catch(e) { continue; }
+  }
+  return null;
+}
+
+function calcRSI(closes, period=14) {
+  if (closes.length < period+1) return 50;
+  let g=0, l=0;
+  for (let i=closes.length-period; i<closes.length; i++) {
+    const d=closes[i]-closes[i-1];
+    if(d>0) g+=d; else l-=d;
+  }
+  const ag=g/period, al=l/period;
+  if(al===0) return 100;
+  return Math.round(100-100/(1+ag/al));
+}
+
+function calcMA(arr, period) {
+  if(arr.length<period) return null;
+  return arr.slice(-period).reduce((a,b)=>a+b,0)/period;
+}
+
+function detectSetup(closes, volumes, rsi) {
+  if(closes.length<21) return {setup:'None',score:0,strength:'low',volRatio:1};
+  const price = closes[closes.length-1];
+  const ma9=calcMA(closes,9), ma21=calcMA(closes,21);
+  const pMa9=calcMA(closes.slice(0,-1),9), pMa21=calcMA(closes.slice(0,-1),21);
+  const avgVol=volumes.slice(-20).reduce((a,b)=>a+b,0)/20;
+  const lastVol=volumes[volumes.length-1]||avgVol;
+  const volRatio=avgVol>0?Math.round(lastVol/avgVol*10)/10:1.0;
+  const recent20=closes.slice(-20);
+  const mean20=recent20.reduce((a,b)=>a+b,0)/20;
+  const std20=Math.sqrt(recent20.reduce((a,b)=>a+(b-mean20)**2,0)/20);
+  const bbWidth=mean20>0?(std20*4)/mean20:0.1;
+  let setup='None', score=0;
+  if(rsi<40){
+    setup='RSI Oversold';
+    score=rsi<30?78:rsi<35?68:52;
+    score+=volRatio>1.5?15:5;
+    const chg=(closes[closes.length-1]-closes[closes.length-2])/closes[closes.length-2];
+    score+=chg>0?10:0;
+  } else if(volRatio>1.8&&price>calcMA(closes.slice(0,-1),20)){
+    setup='Breakout';
+    score=volRatio>2.5?78:volRatio>2.0?68:55;
+    score+=rsi>55?10:0;
+    const chg=(price-closes[closes.length-2])/closes[closes.length-2]*100;
+    score+=chg>1.5?10:0;
+  } else if(ma9&&ma21&&pMa9&&pMa21&&pMa9<pMa21&&ma9>ma21){
+    setup='MA Cross'; score=70;
+    score+=volRatio>1.2?10:0;
+    score+=rsi>45&&rsi<65?10:0;
+  } else if(bbWidth<0.08&&rsi>38&&rsi<62){
+    setup='Squeeze';
+    score=bbWidth<0.05?74:60;
+    score+=volRatio<1.0?8:0;
+  } else if(rsi<50&&ma9&&ma21&&ma9>ma21){setup='MA Cross';score=44;}
+  else if(rsi<45){setup='RSI Oversold';score=40;}
+  score=Math.min(score,95);
+  const strength=score>=65?'high':score>=42?'medium':'low';
+  return {setup,score,strength,volRatio};
+}
+
+async function processStock(ticker) {
+  const result = await fetchYahoo(ticker);
+  if (!result) return null;
+  try {
+    const meta = result.meta;
+    const q = result.indicators?.quote?.[0];
+    const ts = result.timestamp || [];
+    const closes = ts.map((_,i)=>q?.close?.[i]).filter(v=>v!=null&&v>0);
+    const volumes = ts.map((_,i)=>q?.volume?.[i]||0).filter((_,i)=>q?.close?.[i]!=null&&q?.close?.[i]>0);
+    if(closes.length<15) return null;
+    const price = Math.round((meta.regularMarketPrice||closes[closes.length-1])*100)/100;
+    const prev = meta.chartPreviousClose||meta.previousClose||closes[closes.length-2];
+    const changePct = prev?Math.round(((price-prev)/prev)*10000)/100:0;
+    const w52High = Math.round((meta.fiftyTwoWeekHigh||Math.max(...closes))*100)/100;
+    const w52Low = Math.round((meta.fiftyTwoWeekLow||Math.min(...closes))*100)/100;
+    const w52Range = w52High-w52Low;
+    const w52Pct = w52Range>0?Math.round((price-w52Low)/w52Range*100):50;
+    const w52Val = w52Pct<=35?'cheap':w52Pct<=70?'mid':'exp';
+    const rsi = calcRSI(closes);
+    const {setup,score,strength,volRatio} = detectSetup(closes,volumes,rsi);
+    const stopLoss = Math.round(price*(setup==='Breakout'?0.95:0.93)*100)/100;
+    const target = Math.round(price*(setup==='RSI Oversold'?1.12:setup==='Breakout'?1.16:setup==='MA Cross'?1.10:1.09)*100)/100;
+    const rr = stopLoss<price?Math.round((target-price)/(price-stopLoss)*10)/10:0;
+    return {t:ticker,n:NAMES[ticker]||ticker,price,changePct,rsi,volRatio,setup,score,strength,stopLoss,target,rr,w52Low,w52High,w52Pct,w52Val};
+  } catch(e){ return null; }
+}
+
+async function runScan() {
+  const universe = document.getElementById('universe-select').value;
+  const tickers = UNIVERSES[universe];
+  const btn = document.getElementById('scan-btn');
+  btn.disabled=true; btn.textContent='... Escaneando';
+  document.getElementById('error-box').style.display='none';
+  const pw=document.getElementById('progress-wrap');
+  pw.style.display='block';
+  // Skeletons
+  let sk='<div class="results-header"><span>Instrumento</span><span>Precio</span><span>Cambio</span><span>RSI</span><span>Vol Ratio</span><span>Entry / Target / Stop</span><span>Rango 52 semanas</span><span>Score</span></div>';
+  for(let i=0;i<Math.min(tickers.length,6);i++){
+    sk+=`<div class="stock-card" style="border-left:3px solid #1e1e1e;cursor:default;">
+      <div><div class="shimmer" style="height:15px;width:50px;margin-bottom:6px;"></div><div class="shimmer" style="height:11px;width:90px;"></div></div>
+      <div class="shimmer" style="height:15px;width:60px;"></div>
+      <div class="shimmer" style="height:13px;width:45px;"></div>
+      <div><div class="shimmer" style="height:13px;width:30px;margin-bottom:5px;"></div><div class="shimmer" style="height:3px;width:100%;"></div></div>
+      <div class="shimmer" style="height:13px;width:35px;"></div>
+      <div><div class="shimmer" style="height:12px;width:100%;margin-bottom:4px;"></div><div class="shimmer" style="height:12px;width:70%;"></div></div>
+      <div><div class="shimmer" style="height:20px;width:100%;margin-bottom:5px;"></div><div class="shimmer" style="height:5px;width:100%;"></div></div>
+      <div><div class="shimmer" style="height:18px;width:30px;margin-bottom:5px;"></div><div class="shimmer" style="height:26px;width:65px;"></div></div>
+    </div>`;
+  }
+  document.getElementById('results-container').innerHTML=sk;
+  allResults=[]; let done=0, errors=0;
+  // Sequential with small delay — more reliable than parallel for proxies
+  for(let i=0;i<tickers.length;i++){
+    const r=await processStock(tickers[i]);
+    if(r) allResults.push(r); else errors++;
+    done++;
+    const pct=Math.round(done/tickers.length*100);
+    document.getElementById('progress-fill').style.width=pct+'%';
+    document.getElementById('progress-text').textContent=`Analizando ${done}/${tickers.length}: ${tickers[i]}... (${pct}%)`;
+    if(i<tickers.length-1) await new Promise(r=>setTimeout(r,300));
+  }
+  pw.style.display='none';
+  btn.disabled=false; btn.textContent='▶ Ejecutar Scan';
+  const eb=document.getElementById('error-box');
+  if(allResults.length===0){
+    eb.className='error-box warn'; eb.style.display='block';
+    eb.innerHTML=`No se obtuvieron datos (${errors} errores).<br>Puede ser un bloqueo temporal del proxy. Espera 30 segundos e intenta de nuevo.<br>También puedes intentar con una lista más pequeña.`;
+    document.getElementById('results-container').innerHTML='<div class="empty-state"><div>No se obtuvieron datos. Intenta de nuevo en unos segundos.</div></div>';
+    return;
+  }
+  if(errors>0){
+    eb.className='error-box ok'; eb.style.display='block';
+    eb.textContent=`Scan completado: ${allResults.length} stocks con datos. ${errors} no disponibles (posiblemente fuera de horario o símbolo no listado).`;
+  }
+  const withSetup=allResults.filter(r=>r.strength!=='low');
+  allResults=withSetup.length>0?withSetup:allResults.sort((a,b)=>b.score-a.score).slice(0,10);
+  allResults.sort((a,b)=>b.score-a.score);
+  updateMetrics(tickers.length);
+  renderResults();
+  const now=new Date();
+  document.getElementById('last-scan').textContent=`Yahoo Finance Live · ${now.toLocaleDateString('es-PA')} ${now.toLocaleTimeString('es-PA',{hour:'2-digit',minute:'2-digit'})} · ${allResults.length} oportunidades`;
+}
+
+function updateMetrics(total) {
+  const high=allResults.filter(r=>r.strength==='high').length;
+  const med=allResults.filter(r=>r.strength==='medium').length;
+  document.getElementById('m-total').textContent=total;
+  document.getElementById('m-opps').textContent=high+med;
+  document.getElementById('m-high').textContent=high;
+  document.getElementById('m-med').textContent=med;
+  const sc={};
+  allResults.forEach(r=>{if(r.setup!=='None')sc[r.setup]=(sc[r.setup]||0)+1;});
+  const top=Object.entries(sc).sort((a,b)=>b[1]-a[1])[0];
+  document.getElementById('m-top').textContent=top?`${top[0]} (${top[1]})`:'—';
+}
+
+function getSetupClass(s){
+  if(s==='RSI Oversold') return 'setup-oversold';
+  if(s==='Breakout') return 'setup-breakout';
+  if(s==='MA Cross') return 'setup-ma';
+  if(s==='Squeeze') return 'setup-squeeze';
+  return 'setup-none';
+}
+
+function getValBadge(v){
+  if(v==='cheap') return '<span class="w52-badge w52-cheap">Barato</span>';
+  if(v==='mid') return '<span class="w52-badge w52-mid">Zona media</span>';
+  return '<span class="w52-badge w52-exp">Caro</span>';
+}
+
+function getValColor(v){return v==='cheap'?'#4ade80':v==='mid'?'#facc15':'#f87171';}
+
+function render52W(r){
+  const color=getValColor(r.w52Val);
+  const pct=Math.min(Math.max(r.w52Pct,2),98);
+  return `<div>
+    <div class="w52-row">
+      <span class="w52-num">$${r.w52Low.toFixed(0)}</span>
+      ${getValBadge(r.w52Val)}
+      <span class="w52-num">$${r.w52High.toFixed(0)}</span>
+    </div>
+    <div class="w52-bar-track">
+      <div style="position:absolute;top:0;left:0;width:${pct}%;height:100%;background:linear-gradient(to right,#1e2a1e,${color});border-radius:3px;"></div>
+      <div class="w52-dot" style="left:${pct}%;background:${color};"></div>
+    </div>
+    <div class="w52-pct">${r.w52Pct}% del rango anual</div>
+  </div>`;
+}
+
+function renderResults(){
+  let filtered=[...allResults];
+  if(filters.setup!=='all') filtered=filtered.filter(r=>r.setup===filters.setup);
+  if(filters.str!=='all') filtered=filtered.filter(r=>r.strength===filters.str);
+  if(filters.val!=='all') filtered=filtered.filter(r=>r.w52Val===filters.val);
+  window._fr=filtered;
+  if(filtered.length===0){
+    document.getElementById('results-container').innerHTML='<div class="empty-state"><div>No hay resultados para ese filtro</div></div>';
+    return;
+  }
+  let html='<div class="results-header"><span>Instrumento</span><span>Precio</span><span>Cambio</span><span>RSI</span><span>Vol Ratio</span><span>Entry / Target / Stop</span><span>Rango 52 semanas</span><span>Score</span></div>';
+  filtered.slice(0,15).forEach((r,i)=>{
+    const rsiColor=r.rsi<35?'#4ade80':r.rsi<50?'#fb923c':r.rsi>70?'#f87171':'#60a5fa';
+    html+=`
+    <div class="stock-card ${r.strength}" onclick="toggleDetail('dp${i}')">
+      <div>
+        <div class="ticker">${r.t}</div>
+        <div class="company-name">${r.n}</div>
+        <span class="setup-badge ${getSetupClass(r.setup)}">${r.setup}</span>
+      </div>
+      <div class="price">$${r.price.toFixed(2)}</div>
+      <div class="${r.changePct>=0?'change-pos':'change-neg'}">${r.changePct>=0?'+':''}${r.changePct.toFixed(2)}%</div>
+      <div>
+        <div class="rsi-val">${r.rsi}</div>
+        <div class="rsi-bar"><div class="rsi-fill" style="width:${r.rsi}%;background:${rsiColor};"></div></div>
+      </div>
+      <div class="vol-val">${r.volRatio.toFixed(1)}x</div>
+      <div class="target-info">
+        $${r.price.toFixed(2)} → <span class="target-price">$${r.target.toFixed(2)}</span><br>
+        <span class="stop-price">Stop $${r.stopLoss.toFixed(2)}</span> · R/R ${r.rr}:1
+      </div>
+      <div>${render52W(r)}</div>
+      <div>
+        <span class="${r.strength==='high'?'score-high':'score-med'}">${r.score}</span>
+        <button class="save-btn" onclick="event.stopPropagation();saveIdx(${i})">Guardar</button>
+      </div>
+    </div>
+    <div class="detail-panel" id="dp${i}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+        <span style="font-weight:600;font-size:15px;color:#fff;">${r.t} — ${r.n}</span>
+        <button class="analyze-btn" onclick="openAnalysis(${i})">Pedir análisis Claude →</button>
+      </div>
+      <div class="detail-grid">
+        <div><div class="detail-label">Setup</div><div class="detail-value">${r.setup}</div></div>
+        <div><div class="detail-label">Fuerza</div><div class="detail-value ${r.strength==='high'?'green':''}">${r.strength==='high'?'Alta ★':'Media'}</div></div>
+        <div><div class="detail-label">Precio real</div><div class="detail-value">$${r.price.toFixed(2)}</div></div>
+        <div><div class="detail-label">Cambio hoy</div><div class="detail-value ${r.changePct>=0?'green':'red'}">${r.changePct>=0?'+':''}${r.changePct.toFixed(2)}%</div></div>
+        <div><div class="detail-label">Target (+${Math.round((r.target/r.price-1)*100)}%)</div><div class="detail-value green">$${r.target.toFixed(2)}</div></div>
+        <div><div class="detail-label">Stop loss (-${Math.round((1-r.stopLoss/r.price)*100)}%)</div><div class="detail-value red">$${r.stopLoss.toFixed(2)}</div></div>
+        <div><div class="detail-label">R/R ratio</div><div class="detail-value">${r.rr}:1</div></div>
+        <div><div class="detail-label">RSI (14)</div><div class="detail-value">${r.rsi} ${r.rsi<35?'↓ Sobrevendido':r.rsi>70?'↑ Sobrecomprado':'— Neutro'}</div></div>
+        <div><div class="detail-label">Volumen ratio</div><div class="detail-value">${r.volRatio.toFixed(1)}x promedio</div></div>
+        <div><div class="detail-label">Mínimo 52W</div><div class="detail-value green">$${r.w52Low.toFixed(2)}</div></div>
+        <div><div class="detail-label">Máximo 52W</div><div class="detail-value red">$${r.w52High.toFixed(2)}</div></div>
+        <div><div class="detail-label">Posición 52W</div><div class="detail-value ${r.w52Val==='cheap'?'green':r.w52Val==='mid'?'amber':'red'}">${r.w52Pct}% — ${r.w52Val==='cheap'?'Zona barata':r.w52Val==='mid'?'Zona media':'Zona cara'}</div></div>
+      </div>
+      <div style="font-size:12px;color:#555;padding-top:10px;border-top:1px solid #1e1e1e;">
+        ${getSetupDesc(r)}
+      </div>
+    </div>`;
+  });
+  document.getElementById('results-container').innerHTML=html;
+}
+
+function getSetupDesc(r){
+  const zone=r.w52Val==='cheap'?' Precio en zona de descuento histórico — buen contexto de entrada.':r.w52Val==='exp'?' Precio cerca de máximos anuales — menor margen de seguridad.':' Precio en zona neutral del rango anual.';
+  if(r.setup==='RSI Oversold') return `RSI en ${r.rsi} — sobreventa real. Buscar vela de reversión o confirmación de volumen antes de entrar.${zone}`;
+  if(r.setup==='Breakout') return `Volumen ${r.volRatio.toFixed(1)}x el promedio. Precio rompiendo resistencia. Confirmar cierre sobre el nivel.${zone}`;
+  if(r.setup==='MA Cross') return `MA9 cruzó sobre MA21 en timeframe diario — señal de momentum positivo.${zone}`;
+  return `Bollinger Bands comprimiéndose. Squeeze detectado — expansión de volatilidad inminente.${zone}`;
+}
+
+function toggleDetail(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='block'?'none':'block';}
+
+function openAnalysis(i){
+  const r=(window._fr||allResults)[i];
+  if(!r) return;
+  const zone=r.w52Val==='cheap'?`zona barata (${r.w52Pct}% del rango anual)`:r.w52Val==='exp'?`zona cara (${r.w52Pct}% del rango anual)`:`zona media (${r.w52Pct}% del rango anual)`;
+  const msg=`Analiza ${r.t} (${r.n}) para swing trade hoy. Setup: ${r.setup}. RSI real: ${r.rsi}. Precio: $${r.price}. Cambio hoy: ${r.changePct>=0?'+':''}${r.changePct}%. Rango 52W: mínimo $${r.w52Low} / máximo $${r.w52High} — en ${zone}. Vol ratio: ${r.volRatio}x. Score técnico: ${r.score}/95. Dame: 1) análisis técnico 2) catalizadores fundamentales 3) niveles clave soporte/resistencia 4) precio de entrada específico 5) riesgos. ¿Es buena entrada ahora?`;
+  navigator.clipboard.writeText(msg).then(()=>{
+    alert('✓ Copiado al portapapeles. Pégalo en Claude para el análisis completo.');
+  }).catch(()=>{ alert('Copia este mensaje:\n\n'+msg); });
+}
+
+function saveIdx(i){
+  const r=(window._fr||allResults)[i];
+  if(!r) return;
+  const item={ticker:r.t,company:r.n,setup:r.setup,strength:r.strength,price:r.price,target:r.target,stop:r.stopLoss,rr:r.rr,score:r.score,w52Low:r.w52Low,w52High:r.w52High,w52Pct:r.w52Pct,w52Val:r.w52Val,date:new Date().toLocaleDateString('es-PA'),time:new Date().toLocaleTimeString('es-PA',{hour:'2-digit',minute:'2-digit'}),status:'open'};
+  savedHistory.unshift(item);
+  localStorage.setItem('swing_v3_history',JSON.stringify(savedHistory.slice(0,50)));
+  renderHistory();
+  const btns=document.querySelectorAll('.save-btn');
+  if(btns[i]){btns[i].textContent='✓ Guardado';btns[i].style.color='#4ade80';setTimeout(()=>{if(btns[i]){btns[i].textContent='Guardar';btns[i].style.color='';}},2500);}
+}
+
+function markStatus(idx,status){
+  savedHistory[idx].status=status;
+  localStorage.setItem('swing_v3_history',JSON.stringify(savedHistory));
+  renderHistory();
+}
+
+function renderHistory(){
+  if(savedHistory.length===0){document.getElementById('history-list').innerHTML='<div class="no-history">Guarda setups para hacer seguimiento.</div>';return;}
+  const wins=savedHistory.filter(h=>h.status==='win').length;
+  const losses=savedHistory.filter(h=>h.status==='loss').length;
+  const closed=wins+losses;
+  let html='';
+  if(closed>0){html+=`<div style="display:flex;gap:20px;font-size:13px;margin-bottom:16px;padding:10px 14px;background:#111;border-radius:8px;border:1px solid #1e1e1e;flex-wrap:wrap;"><span>Cerrados: <b style="color:#fff">${closed}</b></span><span>Win: <b style="color:#4ade80">${wins}</b></span><span>Loss: <b style="color:#f87171">${losses}</b></span><span>Win rate: <b style="color:#fff">${Math.round(wins/closed*100)}%</b></span></div>`;}
+  savedHistory.slice(0,15).forEach((item,i)=>{
+    const sc=item.status==='win'?'#4ade80':item.status==='loss'?'#f87171':'#555';
+    const sl=item.status==='win'?'Win ✓':item.status==='loss'?'Loss ✗':'Abierto';
+    const vl=item.w52Val==='cheap'?'<span style="color:#4ade80;font-size:11px;">Comprado barato</span>':item.w52Val==='exp'?'<span style="color:#f87171;font-size:11px;">Comprado caro</span>':'<span style="color:#facc15;font-size:11px;">Zona media</span>';
+    html+=`<div class="history-item"><div><span class="history-ticker">${item.ticker}</span><span class="setup-badge ${getSetupClass(item.setup)}">${item.setup}</span>${item.w52Val?vl:''}<span class="history-date">${item.date} ${item.time}</span><span style="color:${sc};font-size:12px;margin-left:8px;">${sl}</span></div><div class="history-stats"><span>$${item.price.toFixed(2)}</span><span style="color:#4ade80">$${item.target.toFixed(2)}</span><span style="color:#f87171">$${item.stop.toFixed(2)}</span><span>R/R ${item.rr}:1</span>${item.status==='open'?`<button class="save-btn" style="color:#4ade80;border-color:#1a4a2a;display:inline-block;width:auto;" onclick="markStatus(${i},'win')">✓ Win</button><button class="save-btn" style="color:#f87171;border-color:#4a1a1a;display:inline-block;width:auto;" onclick="markStatus(${i},'loss')">✗ Loss</button>`:''}</div></div>`;
+  });
+  document.getElementById('history-list').innerHTML=html;
+}
+
+function clearResults(){
+  allResults=[];
+  document.getElementById('results-container').innerHTML='<div class="empty-state"><div class="empty-icon">◎</div><div>Ejecuta el scan para obtener datos reales del mercado</div></div>';
+  ['m-total','m-opps','m-high','m-med','m-top'].forEach(id=>document.getElementById(id).textContent='—');
+  document.getElementById('last-scan').textContent='Datos reales via Yahoo Finance · Haz clic en "Ejecutar Scan"';
+  document.getElementById('error-box').style.display='none';
+}
+
+function clearHistory(){
+  if(!confirm('¿Limpiar todo el historial?')) return;
+  savedHistory=[];
+  localStorage.setItem('swing_v3_history','[]');
+  renderHistory();
+}
+
+function setFilter(type,val,btn){
+  filters[type]=val;
+  document.querySelectorAll(`[data-f="${type}"]`).forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if(allResults.length>0) renderResults();
+}
+
+renderHistory();
+</script>
+</body>
+</html>
