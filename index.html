@@ -166,6 +166,20 @@
 .best-entry-meta{flex:1;font-size:12px;color:#6dbb6d}
 .best-entry-score{font-size:17px;font-weight:700;color:#4ade80;min-width:30px;text-align:right}
 .regime-bonus{display:inline-block;padding:0 5px;border-radius:4px;font-size:10px;background:#1a2a1a;color:#4ade80;border:1px solid #1a4a2a;margin-left:4px;vertical-align:middle}
+/* TIER LEVELS */
+.stock-card.tier-1{border-left:3px solid #4ade80;background:#0b180b}
+.stock-card.tier-2{border-left:3px solid #facc15;background:#181600}
+.stock-card.tier-3{border-left:3px solid #333;background:#0e0e0e}
+.tier-badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:8px;font-size:11px;font-weight:600;margin-top:5px}
+.tier-1-badge{background:#0a2a0a;color:#4ade80;border:1px solid #1a5a1a}
+.tier-2-badge{background:#252200;color:#facc15;border:1px solid #4a4000}
+.tier-3-badge{background:#1a1a1a;color:#555;border:1px solid #2a2a2a}
+.tc-criteria{display:flex;gap:8px;margin-top:4px;font-size:11px;flex-wrap:wrap}
+.tc-ok{color:#4ade80}
+.tc-fail{color:#f87171}
+.section-divider.div-tier-1{color:#4ade80;border-top-color:#1a3a1a}
+.section-divider.div-tier-2{color:#facc15;border-top-color:#3a3500}
+.section-divider.div-tier-3{color:#444;border-top-color:#1a1a1a}
 </style>
 
 </head>
@@ -212,9 +226,9 @@
 
 ```
 <div class="info-bar">
-  <span><b style="color:#4ade80">Triple Confirmation:</b> EMA20 > EMA50 + Precio arriba + RSI 45–70 + Volumen</span>
-  <span><b style="color:#fb923c">Pullback:</b> Precio rebotando sobre EMA20 en tendencia alcista</span>
-  <span><b style="color:#60a5fa">ATR Stop</b> = stop dinámico calculado en tiempo real</span>
+  <span><b style="color:#4ade80">✓ Triple Confirmation:</b> RSI 55–70 + Vol &gt;1.0x + Precio &gt; EMA20 &amp; EMA50 — entrada inmediata</span>
+  <span><b style="color:#facc15">⚡ En Radar:</b> 2 de 3 criterios cumplidos — monitorear, no entrar aún</span>
+  <span><b style="color:#60a5fa">ATR Stop</b> = stop dinámico 2× ATR calculado en tiempo real</span>
 </div>
 
 <div id="market-context" class="market-context market-side"></div>
@@ -222,8 +236,8 @@
 <div class="metrics">
   <div class="metric"><div class="metric-label">Analizados</div><div class="metric-value" id="m-total">—</div></div>
   <div class="metric"><div class="metric-label">Oportunidades</div><div class="metric-value green" id="m-opps">—</div></div>
-  <div class="metric"><div class="metric-label">Señal Alta</div><div class="metric-value green" id="m-high">—</div></div>
-  <div class="metric"><div class="metric-label">Señal Media</div><div class="metric-value amber" id="m-med">—</div></div>
+  <div class="metric"><div class="metric-label">Triple Confirm ✓</div><div class="metric-value green" id="m-high">—</div></div>
+  <div class="metric"><div class="metric-label">En Radar ⚡</div><div class="metric-value amber" id="m-med">—</div></div>
   <div class="metric"><div class="metric-label">Setup del día</div><div class="metric-value small" id="m-top">—</div></div>
 </div>
 
@@ -791,15 +805,28 @@ async function runScan(){
 }
 
 function updateMetrics(total){
-  const high=allResults.filter(r=>r.strength==='high').length;
-  const med=allResults.filter(r=>r.strength==='medium').length;
+  const t1=allResults.filter(r=>calcTierLevel(r).tier===1).length;
+  const t2=allResults.filter(r=>calcTierLevel(r).tier===2).length;
   document.getElementById('m-total').textContent=total;
-  document.getElementById('m-opps').textContent=high+med;
-  document.getElementById('m-high').textContent=high;
-  document.getElementById('m-med').textContent=med;
+  document.getElementById('m-opps').textContent=t1+t2;
+  document.getElementById('m-high').textContent=t1;
+  document.getElementById('m-med').textContent=t2;
   const sc={};allResults.forEach(r=>{if(r.setup!=='None')sc[r.setup]=(sc[r.setup]||0)+1});
   const top=Object.entries(sc).sort((a,b)=>b[1]-a[1])[0];
   document.getElementById('m-top').textContent=top?`${top[0]} (${top[1]})`:'—';
+}
+
+// ── TRIPLE CONFIRMATION TIER LOGIC ────────────────────────────────
+function calcTierLevel(r){
+  const c1=r.rsi>=55&&r.rsi<=70;
+  const c2=r.volRatio>1.0;
+  const c3=!!(r.ema20&&r.ema50&&r.price>r.ema20&&r.price>r.ema50);
+  const count=(c1?1:0)+(c2?1:0)+(c3?1:0);
+  const missing=[];
+  if(!c1)missing.push('RSI');
+  if(!c2)missing.push('Volumen');
+  if(!c3)missing.push('Precio>EMAs');
+  return{tier:count===3?1:count===2?2:3,c1,c2,c3,missing};
 }
 
 function getSetupClass(s){if(s==='Trend Following')return'setup-trend';if(s==='Breakout')return'setup-breakout';if(s==='Pullback EMA')return'setup-pullback';if(s==='Squeeze')return'setup-squeeze';return'setup-none'}
@@ -813,18 +840,31 @@ function renderResults(){
   if(filters.str!=='all')filtered=filtered.filter(r=>r.strength===filters.str);
   if(filters.val!=='all')filtered=filtered.filter(r=>r.w52Val===filters.val);
   if(filters.src==='manual')filtered=filtered.filter(r=>r.isManual);
+  // Calculate and cache tier for every result
+  filtered.forEach(r=>r._tier=calcTierLevel(r));
+  // Sort: tier first → manuals before universe within tier → score descending
+  filtered.sort((a,b)=>{
+    if(a._tier.tier!==b._tier.tier)return a._tier.tier-b._tier.tier;
+    if(a.isManual!==b.isManual)return a.isManual?-1:1;
+    return b.score-a.score;
+  });
   window._fr=filtered;
   if(filtered.length===0){document.getElementById('results-container').innerHTML='<div class="empty-state"><div>No hay resultados para ese filtro</div></div>';return}
-  const manualRes=filtered.filter(r=>r.isManual),universeRes=filtered.filter(r=>!r.isManual);
-  let html='<div class="results-header"><span>Instrumento · Por qué es atractivo</span><span>Precio</span><span>Cambio</span><span>RSI</span><span>EMA20/50</span><span>Vol Ratio</span><span>Entry / ATR Stop</span><span>Rango 52W</span><span>Score</span></div>';
-  if(manualRes.length>0){html+=`<div class="section-divider">🔵 Tickers manuales (${manualRes.length})</div>`;manualRes.forEach((r)=>{html+=buildCard(r,filtered.indexOf(r),0)})}
-  if(universeRes.length>0){
-    if(manualRes.length>0)html+=`<div class="section-divider">🏆 Ranking por oportunidad — mejor a peor (${universeRes.length})</div>`;
-    else html+=`<div class="section-divider">🏆 Ranking por oportunidad — mejor a peor (${universeRes.length} resultados)</div>`;
-    universeRes.forEach((r,rank)=>{
-      const globalIdx=filtered.indexOf(r);
-      html+=buildCard(r,globalIdx,rank+1);
-    });
+  const tier1=filtered.filter(r=>r._tier.tier===1);
+  const tier2=filtered.filter(r=>r._tier.tier===2);
+  const tier3=filtered.filter(r=>r._tier.tier===3);
+  let html='<div class="results-header"><span>Instrumento · Nivel</span><span>Precio</span><span>Cambio</span><span>RSI</span><span>EMA20/50</span><span>Vol Ratio</span><span>Entry / ATR Stop</span><span>Rango 52W</span><span>Score</span></div>';
+  if(tier1.length>0){
+    html+=`<div class="section-divider div-tier-1">✓ Triple Confirmation — Entrada inmediata (${tier1.length})</div>`;
+    tier1.forEach((r,rank)=>{html+=buildCard(r,filtered.indexOf(r),rank+1)});
+  }
+  if(tier2.length>0){
+    html+=`<div class="section-divider div-tier-2">⚡ En Radar — Monitorear (${tier2.length})</div>`;
+    tier2.forEach((r,rank)=>{html+=buildCard(r,filtered.indexOf(r),rank+1)});
+  }
+  if(tier3.length>0){
+    html+=`<div class="section-divider div-tier-3">◎ En Seguimiento — Sin señal activa (${tier3.length})</div>`;
+    tier3.forEach((r,rank)=>{html+=buildCard(r,filtered.indexOf(r),rank+1)});
   }
   document.getElementById('results-container').innerHTML=html;
 }
@@ -857,28 +897,39 @@ function getWhyAttractive(r){
 }
 
 function buildCard(r,i,rank){
+  const tier=r._tier||calcTierLevel(r);
   const rsiColor=r.rsi<35?'#4ade80':r.rsi<50?'#fb923c':r.rsi>70?'#f87171':'#60a5fa';
-  const cardClass=r.isManual?'manual-result':r.strength==='high'?'high':'medium';
-  const scoreClass=r.isManual?'score-manual':r.strength==='high'?'score-high':'score-med';
+  // Card class: tier takes priority, manual overlay on top
+  const tierCardClass=tier.tier===1?'tier-1':tier.tier===2?'tier-2':'tier-3';
+  const cardClass=r.isManual?`manual-result ${tierCardClass}`:tierCardClass;
+  const scoreClass=tier.tier===1?'score-high':tier.tier===2?'score-med':'score-manual';
   const manualTag=r.isManual?'<span class="manual-badge">manual</span>':'';
   const ema20color=r.ema20&&r.price>r.ema20?'#4ade80':'#f87171';
   const ema50color=r.ema50&&r.price>r.ema50?'#4ade80':'#f87171';
-  // Rank badge — only for universe results (not manual)
+  // Rank badge — only for tier-1 results
   const rankNum=rank||0;
   const rankClass=rankNum===1?'rank-1':rankNum===2?'rank-2':rankNum===3?'rank-3':'rank-other';
-  const rankBadge=(!r.isManual&&rankNum>0)?`<span class="rank-badge ${rankClass}">${rankNum}</span> `:'';
-  // Why attractive box
-  const whyReasons=getWhyAttractive(r);
-  const whyColor=r.strength==='high'?'':r.isManual?'blue':'amber';
-  const whyHtml=whyReasons.length>0?`<div class="why-box ${whyColor}"><div class="why-label">Por qué es atractivo</div>${whyReasons.map(w=>`· ${w}`).join('<br>')}</div>`:'';
-  const rankLabel=(!r.isManual&&rankNum>0)?`#${rankNum} · `:'';
+  const rankBadge=(tier.tier===1&&rankNum>0)?`<span class="rank-badge ${rankClass}">${rankNum}</span> `:'';
+  // Tier badge + criteria row
+  let tierBadgeHtml,criteriaHtml='';
+  if(tier.tier===1){
+    tierBadgeHtml=`<span class="tier-badge tier-1-badge">✓ Triple Confirmation</span>`;
+    criteriaHtml=`<div class="tc-criteria"><span class="tc-ok">✓ RSI ${r.rsi}</span><span class="tc-ok">✓ Vol ${r.volRatio.toFixed(1)}x</span><span class="tc-ok">✓ Precio &gt; EMA20 &amp; EMA50</span></div>`;
+  }else if(tier.tier===2){
+    tierBadgeHtml=`<span class="tier-badge tier-2-badge">⚡ En Radar — falta: ${tier.missing.join(', ')}</span>`;
+    criteriaHtml=`<div class="tc-criteria"><span class="${tier.c1?'tc-ok':'tc-fail'}">${tier.c1?'✓':'✗'} RSI ${r.rsi}</span><span class="${tier.c2?'tc-ok':'tc-fail'}">${tier.c2?'✓':'✗'} Vol ${r.volRatio.toFixed(1)}x</span><span class="${tier.c3?'tc-ok':'tc-fail'}">${tier.c3?'✓':'✗'} Precio &gt; EMAs</span></div>`;
+  }else{
+    tierBadgeHtml=`<span class="tier-badge tier-3-badge">◎ En Seguimiento</span>`;
+  }
+  const rankLabel=(tier.tier===1&&rankNum>0)?`#${rankNum} · `:'';
   return`
   <div class="stock-card ${cardClass}" onclick="toggleDetail('dp${i}')">
     <div>
       <div style="display:flex;align-items:center;gap:2px">${rankBadge}<div class="ticker" style="display:inline">${r.t}${manualTag}</div></div>
       <div class="company-name">${r.n}</div>
-      <span class="setup-badge ${getSetupClass(r.setup)}">${r.setup}</span>
-      ${whyHtml}
+      ${tierBadgeHtml}
+      ${criteriaHtml}
+      <span class="setup-badge ${getSetupClass(r.setup)}" style="margin-top:4px">${r.setup}</span>
     </div>
     <div class="price">$${r.price.toFixed(2)}</div>
     <div class="${r.changePct>=0?'change-pos':'change-neg'}">${r.changePct>=0?'+':''}${r.changePct.toFixed(2)}%</div>
