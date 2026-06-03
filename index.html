@@ -195,6 +195,7 @@
         <option value="watchlist" selected>Mi Watchlist (16)</option>
         <option value="sp500">S&P 500 Selectivo (40)</option>
         <option value="nasdaq">Nasdaq Tech (25)</option>
+        <option value="growth">Growth Stocks (10)</option>
         <option value="broad">Descubrimiento Amplio (50)</option>
         <option value="manual_only">Solo mis tickers</option>
       </select>
@@ -315,10 +316,11 @@ const POOLS = {
   sp500:['NVDA','AMZN','GOOGL','META','MSFT','AAPL','TSLA','JPM','V','MA','JNJ','PG','KO','DIS','NFLX','AMD','COST','WMT','MU','INTC','CRM','ADBE','PYPL','UBER','ABNB','NOW','SNOW','NET','PLTR','ARM','LLY','UNH','CVX','XOM','BAC','GS','AMGN','PANW','CRWD','DDOG'],
   nasdaq:['NVDA','AMZN','GOOGL','META','MSFT','AAPL','TSLA','AMD','NFLX','COST','MRVL','PANW','PLTR','MU','QCOM','ASML','AMAT','TEAM','DDOG','ZS','CRWD','OKTA','MELI','SNOW','NET'],
   watchlist:['AMZN','GOOGL','NVDA','CPA','TIGO','LULU','ONON','IBIT','TMUS','SPY','MU','DIS','JPM','NFLX','UBER','META'],
+  growth:['AMD','AVGO','LLY','NOW','NET','CRM','BKNG','DDOG','ISRG','ARM'],
   broad:['NVDA','AMZN','GOOGL','META','MSFT','AAPL','TSLA','JPM','V','MA','NFLX','AMD','COST','MU','CRM','UBER','NOW','NET','PLTR','CRWD','DDOG','LLY','UNH','BAC','GS','MELI','ASML','MRVL','QCOM','SNOW','ZS','PANW','ABNB','PYPL','DIS','WMT','KO','ONON','LULU','IBIT','CPA','TIGO','TMUS','NKE','SHOP','COIN','SOFI','ARM','XOM','CVX']
 };
 
-const NAMES={NVDA:'Nvidia',AMZN:'Amazon',GOOGL:'Alphabet',META:'Meta',MSFT:'Microsoft',AAPL:'Apple',TSLA:'Tesla',JPM:'JPMorgan',V:'Visa',MA:'Mastercard',JNJ:'J&J',PG:'P&G',KO:'Coca-Cola',DIS:'Walt Disney',NFLX:'Netflix',AMD:'AMD',COST:'Costco',WMT:'Walmart',MU:'Micron',INTC:'Intel',CRM:'Salesforce',ADBE:'Adobe',PYPL:'PayPal',UBER:'Uber',ABNB:'Airbnb',NOW:'ServiceNow',SNOW:'Snowflake',NET:'Cloudflare',PLTR:'Palantir',ARM:'Arm Holdings',LLY:'Eli Lilly',UNH:'UnitedHealth',CVX:'Chevron',XOM:'ExxonMobil',BAC:'Bank of America',GS:'Goldman Sachs',AMGN:'Amgen',PANW:'Palo Alto',CRWD:'CrowdStrike',DDOG:'Datadog',MRVL:'Marvell',QCOM:'Qualcomm',ASML:'ASML',AMAT:'Applied Materials',TEAM:'Atlassian',ZS:'Zscaler',OKTA:'Okta',MELI:'MercadoLibre',CPA:'Copa Holdings',TIGO:'Millicom',LULU:'Lululemon',ONON:'On Holding',IBIT:'iShares Bitcoin',TMUS:'T-Mobile',SPY:'S&P 500 ETF',NKE:'Nike',SHOP:'Shopify',COIN:'Coinbase',SOFI:'SoFi Technologies',QQQ:'Nasdaq 100 ETF'};
+const NAMES={NVDA:'Nvidia',AMZN:'Amazon',GOOGL:'Alphabet',META:'Meta',MSFT:'Microsoft',AAPL:'Apple',TSLA:'Tesla',JPM:'JPMorgan',V:'Visa',MA:'Mastercard',JNJ:'J&J',PG:'P&G',KO:'Coca-Cola',DIS:'Walt Disney',NFLX:'Netflix',AMD:'AMD',COST:'Costco',WMT:'Walmart',MU:'Micron',INTC:'Intel',CRM:'Salesforce',ADBE:'Adobe',PYPL:'PayPal',UBER:'Uber',ABNB:'Airbnb',NOW:'ServiceNow',SNOW:'Snowflake',NET:'Cloudflare',PLTR:'Palantir',ARM:'Arm Holdings',LLY:'Eli Lilly',UNH:'UnitedHealth',CVX:'Chevron',XOM:'ExxonMobil',BAC:'Bank of America',GS:'Goldman Sachs',AMGN:'Amgen',PANW:'Palo Alto',CRWD:'CrowdStrike',DDOG:'Datadog',MRVL:'Marvell',QCOM:'Qualcomm',ASML:'ASML',AMAT:'Applied Materials',TEAM:'Atlassian',ZS:'Zscaler',OKTA:'Okta',MELI:'MercadoLibre',CPA:'Copa Holdings',TIGO:'Millicom',LULU:'Lululemon',ONON:'On Holding',IBIT:'iShares Bitcoin',TMUS:'T-Mobile',SPY:'S&P 500 ETF',NKE:'Nike',SHOP:'Shopify',COIN:'Coinbase',SOFI:'SoFi Technologies',QQQ:'Nasdaq 100 ETF',AVGO:'Broadcom',BKNG:'Booking Holdings',ISRG:'Intuitive Surgical'};
 
 const PROXIES=[
   t=>`https://api.allorigins.win/get?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`)}`,
