@@ -924,6 +924,7 @@ function buildCard(r,i,rank){
     tierBadgeHtml=`<span class="tier-badge tier-3-badge">◎ En Seguimiento</span>`;
   }
   const rankLabel=(tier.tier===1&&rankNum>0)?`#${rankNum} · `:'';
+  const whyReasons=getWhyAttractive(r);
   return`
   <div class="stock-card ${cardClass}" onclick="toggleDetail('dp${i}')">
     <div>
