@@ -1,0 +1,69 @@
+{
+  "bid_sheet": {
+    "version": "1.0",
+    "created_at": "2026-06-17",
+    "status": "draft",
+    "id": "BS-ARIAVEGA-001"
+  },
+  "artist": {
+    "name": "Aria Vega",
+    "type": "headliner",
+    "genre": "TBD",
+    "management_contact": null,
+    "booking_agent": null
+  },
+  "event": {
+    "date": null,
+    "venue": null,
+    "city": null,
+    "country": null,
+    "capacity": 1000,
+    "capacity_label": "1k",
+    "set_length_minutes": null,
+    "set_time": null,
+    "show_type": "concert"
+  },
+  "financials": {
+    "currency": "USD",
+    "fee_minimum": 20000,
+    "fee_offered": null,
+    "deal_type": "flat_fee",
+    "deposit_percentage": 50,
+    "deposit_amount": null,
+    "deposit_due": "30 días antes del evento",
+    "balance_due": "día del evento",
+    "payment_method": null,
+    "backend_percentage": null,
+    "backend_notes": null
+  },
+  "technical_rider": {
+    "stage_size": null,
+    "pa_system": null,
+    "monitors": null,
+    "lighting": null,
+    "backline": null,
+    "crew_provided_by_artist": null,
+    "advance_contact": null
+  },
+  "hospitality_rider": {
+    "dressing_rooms": null,
+    "catering": null,
+    "hotel_nights": null,
+    "ground_transport": null,
+    "flights": null
+  },
+  "marketing": {
+    "billing": "100% headline",
+    "approval_required": true,
+    "assets_deadline_days": 30
+  },
+  "terms": {
+    "contract_deadline": null,
+    "cancellation_policy": "Depósito no reembolsable en caso de cancelación por parte del promotor",
+    "force_majeure": "Aplica según contrato estándar",
+    "exclusivity_radius_km": null,
+    "exclusivity_days_before": null,
+    "exclusivity_days_after": null
+  },
+  "notes": null
+}
