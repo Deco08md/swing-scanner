@@ -672,13 +672,13 @@ function renderPortfolio(results){
         <div><div class="detail-label">Señal</div><div class="detail-value ${r.signal==='exit'?'red':r.signal==='caution'?'amber':'green'}">${sigLabel}</div></div>
         <div><div class="detail-label">Precio actual</div><div class="detail-value">$${r.currentPrice.toFixed(2)}</div></div>
         <div><div class="detail-label">Entry / P&L</div><div class="detail-value">$${r.entry} / <span style="${plColor}">${r.plPct>=0?'+':''}${r.plPct.toFixed(1)}%</span></div></div>
-        <div><div class="detail-label">RSI (14)</div><div class="detail-value ${r.rsi<35?'green':r.rsi>70?'red':'ú}"> ${r.rsi} ${r.rsi<35?'— Sobrevendido':r.rsi>70?'— Sobrecomprado':'— Neutro'}</div></div>
+        <div><div class="detail-label">RSI (14)</div><div class="detail-value ${r.rsi<35?'green':r.rsi>70?'red':''}">${r.rsi} ${r.rsi<35?'— Sobrevendido':r.rsi>70?'— Sobrecomprado':'— Neutro'}</div></div>
         <div><div class="detail-label">EMA20</div><div class="detail-value ${r.ema20&&r.currentPrice>r.ema20?'green':'red'}">${r.ema20?`$${r.ema20.toFixed(1)}`:'—'} (${r.ema20?(r.currentPrice>r.ema20?'arriba':'abajo'):'—'})</div></div>
         <div><div class="detail-label">EMA50</div><div class="detail-value ${r.ema50&&r.currentPrice>r.ema50?'green':'red'}">${r.ema50?`$${r.ema50.toFixed(1)}`:'—'} (${r.ema50?(r.currentPrice>r.ema50?'arriba':'abajo'):'—'})</div></div>
         <div><div class="detail-label">ATR stop (2x)</div><div class="detail-value red">${r.atrStop?`$${r.atrStop.toFixed(2)}`:'—'}</div></div>
         <div><div class="detail-label">Stop IBKR</div><div class="detail-value red">$${r.stop||'—'}</div></div>
         <div><div class="detail-label">Target</div><div class="detail-value green">${r.target?`$${r.target}`:'—'}</div></div>
-        <div><div class="detail-label">% sobre stop</div><div class="detail-value ${stopDiff&&stopDiff<5?'red':'ú}"> ${stopDiff!==null?`${stopDiff.toFixed(1)}%`:'—'}</div></div>
+        <div><div class="detail-label">% sobre stop</div><div class="detail-value ${stopDiff&&stopDiff<5?'red':''}">${stopDiff!==null?`${stopDiff.toFixed(1)}%`:'—'}</div></div>
       </div>
       ${reasons.length>0?`<div style="background:#0d0d0d;border-radius:8px;padding:12px;margin-top:4px"><div style="font-size:11px;color:#555;text-transform:uppercase;margin-bottom:8px">Señales detectadas</div>${reasons.map(r2=>`<div style="font-size:13px;color:${r.signal==='exit'?'#f87171':'#fb923c'};margin-bottom:4px">• ${r2}</div>`).join('')}</div>`:''}
     </div>`;
@@ -763,8 +763,7 @@ function renderMarketContext(ctx){
       <span><b>SPY:</b> ${ctx.spyStatus}</span>
       <span><b>QQQ:</b> ${ctx.qqqStatus}</span>
     </div>
-    <div style="font-size:11px;opacity:0.75">Setups prioritarios: ${setupTags}</div>`;
-}
+    <div style="font-size:11px;opacity:0.75">Setups prioritarios: ${setupTags}</div>`;}
 
 function generateSummaryPrompt(picks,regime){
   const lines=picks.map((r,i)=>`${i+1}. ${r.t} (${r.n}): ${r.setup}, Score ${r.score}/95, RSI ${r.rsi}, Precio $${r.price.toFixed(2)}, Target $${r.target.toFixed(2)}, Stop $${r.stopLoss.toFixed(2)}, R/R ${r.rr}:1, Vol ${r.volRatio.toFixed(1)}x, 52W ${r.w52Pct}%`).join('\n');
@@ -980,7 +979,7 @@ function buildCard(r,i,rank){
   }else{
     tierBadgeHtml=`<span class="tier-badge tier-3-badge">◎ En Seguimiento</span>`;
   }
-  const rankLabel=(tier.tier===1&&rankNum>0)?`#${rankNum} · `:'';
+  const rankLabel=(tier.tier===1&&rankNum>0)?`#${rankNum} · `:''
   const whyReasons=getWhyAttractive(r);
   return`
   <div class="stock-card ${cardClass}" onclick="toggleDetail('dp${i}')">
