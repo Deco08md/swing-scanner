@@ -321,9 +321,10 @@ const POOLS = {
 const NAMES={NVDA:'Nvidia',AMZN:'Amazon',GOOGL:'Alphabet',META:'Meta',MSFT:'Microsoft',AAPL:'Apple',TSLA:'Tesla',JPM:'JPMorgan',V:'Visa',MA:'Mastercard',JNJ:'J&J',PG:'P&G',KO:'Coca-Cola',DIS:'Walt Disney',NFLX:'Netflix',AMD:'AMD',COST:'Costco',WMT:'Walmart',MU:'Micron',INTC:'Intel',CRM:'Salesforce',ADBE:'Adobe',PYPL:'PayPal',UBER:'Uber',ABNB:'Airbnb',NOW:'ServiceNow',SNOW:'Snowflake',NET:'Cloudflare',PLTR:'Palantir',ARM:'Arm Holdings',LLY:'Eli Lilly',UNH:'UnitedHealth',CVX:'Chevron',XOM:'ExxonMobil',BAC:'Bank of America',GS:'Goldman Sachs',AMGN:'Amgen',PANW:'Palo Alto',CRWD:'CrowdStrike',DDOG:'Datadog',MRVL:'Marvell',QCOM:'Qualcomm',ASML:'ASML',AMAT:'Applied Materials',TEAM:'Atlassian',ZS:'Zscaler',OKTA:'Okta',MELI:'MercadoLibre',CPA:'Copa Holdings',TIGO:'Millicom',LULU:'Lululemon',ONON:'On Holding',IBIT:'iShares Bitcoin',TMUS:'T-Mobile',SPY:'S&P 500 ETF',NKE:'Nike',SHOP:'Shopify',COIN:'Coinbase',SOFI:'SoFi Technologies',QQQ:'Nasdaq 100 ETF',AVGO:'Broadcom',BKNG:'Booking Holdings',ISRG:'Intuitive Surgical'};
 
 const PROXIES=[
-  t=>`https://api.allorigins.win/get?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`)}`,
-  t=>`https://corsproxy.io/?${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`)}`,
-  t=>`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`)}`
+  t=>`https://api.allorigins.win/get?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y&events=history`)}`,
+  t=>`https://api.allorigins.win/get?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y&events=history`)}`,
+  t=>`https://corsproxy.io/?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y&events=history`)}`,
+  t=>`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=1y`)}`
 ];
 
 let allResults=[],savedHistory=JSON.parse(localStorage.getItem('swing_v5_history')||'[]');
@@ -334,12 +335,17 @@ let filters={setup:'all',str:'all',val:'all',src:'all'};
 async function fetchYahoo(ticker){
   for(let i=0;i<PROXIES.length;i++){
     try{
-      const resp=await fetch(PROXIES[i](ticker),{signal:AbortSignal.timeout(9000)});
+      const resp=await fetch(PROXIES[i](ticker),{signal:AbortSignal.timeout(12000)});
       if(!resp.ok)continue;
       const raw=await resp.json();
-      const data=raw.contents?JSON.parse(raw.contents):raw;
+      let data=raw;
+      if(raw.contents){
+        try{data=JSON.parse(raw.contents)}catch(e){continue}
+      }else if(typeof raw==='string'){
+        try{data=JSON.parse(raw)}catch(e){continue}
+      }
       const result=data?.chart?.result?.[0];
-      if(!result)continue;
+      if(!result||!result.indicators?.quote?.[0]?.close)continue;
       return result;
     }catch(e){continue}
   }
@@ -628,13 +634,13 @@ function renderPortfolio(results){
         <div><div class="detail-label">Señal</div><div class="detail-value ${r.signal==='exit'?'red':r.signal==='caution'?'amber':'green'}">${sigLabel}</div></div>
         <div><div class="detail-label">Precio actual</div><div class="detail-value">$${r.currentPrice.toFixed(2)}</div></div>
         <div><div class="detail-label">Entry / P&L</div><div class="detail-value">$${r.entry} / <span style="${plColor}">${r.plPct>=0?'+':''}${r.plPct.toFixed(1)}%</span></div></div>
-        <div><div class="detail-label">RSI (14)</div><div class="detail-value ${r.rsi<35?'green':r.rsi>70?'red':'}">${r.rsi} ${r.rsi<35?'— Sobrevendido':r.rsi>70?'— Sobrecomprado':'— Neutro'}</div></div>
+        <div><div class="detail-label">RSI (14)</div><div class="detail-value ${r.rsi<35?'green':r.rsi>70?'red':'}"> ${r.rsi} ${r.rsi<35?'— Sobrevendido':r.rsi>70?'— Sobrecomprado':'— Neutro'}</div></div>
         <div><div class="detail-label">EMA20</div><div class="detail-value ${r.ema20&&r.currentPrice>r.ema20?'green':'red'}">${r.ema20?`$${r.ema20.toFixed(1)}`:'—'} (${r.ema20?(r.currentPrice>r.ema20?'arriba':'abajo'):'—'})</div></div>
         <div><div class="detail-label">EMA50</div><div class="detail-value ${r.ema50&&r.currentPrice>r.ema50?'green':'red'}">${r.ema50?`$${r.ema50.toFixed(1)}`:'—'} (${r.ema50?(r.currentPrice>r.ema50?'arriba':'abajo'):'—'})</div></div>
         <div><div class="detail-label">ATR stop (2x)</div><div class="detail-value red">${r.atrStop?`$${r.atrStop.toFixed(2)}`:'—'}</div></div>
         <div><div class="detail-label">Stop IBKR</div><div class="detail-value red">$${r.stop||'—'}</div></div>
         <div><div class="detail-label">Target</div><div class="detail-value green">${r.target?`$${r.target}`:'—'}</div></div>
-        <div><div class="detail-label">% sobre stop</div><div class="detail-value ${stopDiff&&stopDiff<5?'red':'}">${stopDiff!==null?`${stopDiff.toFixed(1)}%`:'—'}</div></div>
+        <div><div class="detail-label">% sobre stop</div><div class="detail-value ${stopDiff&&stopDiff<5?'red':'}"> ${stopDiff!==null?`${stopDiff.toFixed(1)}%`:'—'}</div></div>
       </div>
       ${reasons.length>0?`<div style="background:#0d0d0d;border-radius:8px;padding:12px;margin-top:4px"><div style="font-size:11px;color:#555;text-transform:uppercase;margin-bottom:8px">Señales detectadas</div>${reasons.map(r2=>`<div style="font-size:13px;color:${r.signal==='exit'?'#f87171':'#fb923c'};margin-bottom:4px">• ${r2}</div>`).join('')}</div>`:''}
     </div>`;
