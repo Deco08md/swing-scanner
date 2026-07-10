@@ -349,7 +349,45 @@ async function fetchYahoo(ticker){
       return result;
     }catch(e){continue}
   }
-  return null;
+  return await fetchStooq(ticker);
+}
+
+async function fetchStooq(ticker){
+  const st=ticker.includes('.')?ticker:`${ticker}.US`;
+  const url=`https://stooq.com/q/d/l/?s=${st}&i=d`;
+  const proxies=[
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(url)}`
+  ];
+  let csv=null;
+  for(const proxy of proxies){
+    try{
+      const resp=await fetch(proxy,{signal:AbortSignal.timeout(15000)});
+      if(!resp.ok)continue;
+      const text=await resp.text();
+      if(text&&text.length>200&&!text.includes('No data')){csv=text;break;}
+    }catch(e){continue}
+  }
+  try{
+    if(!csv)return null;
+    const lines=csv.trim().split('\n').filter(l=>l&&!l.startsWith('Date'));
+    if(lines.length<52)return null;
+    const recent=lines.slice(-260);
+    const closes=[],highs=[],lows=[],volumes=[],timestamps=[];
+    for(const line of recent){
+      const p=line.split(',');
+      if(p.length<6)continue;
+      const c=parseFloat(p[4]),h=parseFloat(p[2]),l=parseFloat(p[3]),v=parseInt(p[5])||0;
+      if(!c||c<=0)continue;
+      closes.push(c);highs.push(h||c);lows.push(l||c);volumes.push(v);
+      timestamps.push(new Date(p[0]).getTime()/1000);
+    }
+    if(closes.length<52)return null;
+    return{meta:{regularMarketPrice:closes[closes.length-1],symbol:ticker,
+      fiftyTwoWeekHigh:Math.max(...closes),fiftyTwoWeekLow:Math.min(...closes)},
+      timestamp:timestamps,
+      indicators:{quote:[{close:closes,high:highs,low:lows,volume:volumes,open:closes}]}};
+  }catch(e){return null}
 }
 
 // ── INDICATORS ────────────────────────────────────────────────────
