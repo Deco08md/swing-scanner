@@ -1008,7 +1008,7 @@ function buildCard(r,i,rank){
     </div>
     <div class="detail-grid">
       <div><div class="detail-label">Setup</div><div class="detail-value">${r.setup}</div></div>
-      <div><div class="detail-label">Fuerza</div><div class="detail-value ${r.strength==='high'?'green':''}">${r.strength==='high'?'Alta ★':r.strength==='medium'?'Media':'Baja'}</div></div>
+      <div><div class="detail-label">Fuerza</div><div class="detail-value ${r.strength==='high'?'green':''}">${ r.strength==='high'?'Alta ★':r.strength==='medium'?'Media':'Baja'}</div></div>
       <div><div class="detail-label">Precio</div><div class="detail-value">$${r.price.toFixed(2)}</div></div>
       <div><div class="detail-label">RSI (14)</div><div class="detail-value">${r.rsi} ${r.rsi<35?'↓ Sobrevendido':r.rsi>70?'↑ Sobrecomprado':'— Neutro'}</div></div>
       <div><div class="detail-label">EMA20</div><div class="detail-value ${r.ema20&&r.price>r.ema20?'green':'red'}">${r.ema20?`$${r.ema20.toFixed(1)}`:'—'}</div></div>
