@@ -672,13 +672,13 @@ function renderPortfolio(results){
         <div><div class="detail-label">Señal</div><div class="detail-value ${r.signal==='exit'?'red':r.signal==='caution'?'amber':'green'}">${sigLabel}</div></div>
         <div><div class="detail-label">Precio actual</div><div class="detail-value">$${r.currentPrice.toFixed(2)}</div></div>
         <div><div class="detail-label">Entry / P&L</div><div class="detail-value">$${r.entry} / <span style="${plColor}">${r.plPct>=0?'+':''}${r.plPct.toFixed(1)}%</span></div></div>
-        <div><div class="detail-label">RSI (14)</div><div class="detail-value ${r.rsi<35?'green':r.rsi>70?'red':'}"> ${r.rsi} ${r.rsi<35?'— Sobrevendido':r.rsi>70?'— Sobrecomprado':'— Neutro'}</div></div>
+        <div><div class="detail-label">RSI (14)</div><div class="detail-value ${r.rsi<35?'green':r.rsi>70?'red':'ú}"> ${r.rsi} ${r.rsi<35?'— Sobrevendido':r.rsi>70?'— Sobrecomprado':'— Neutro'}</div></div>
         <div><div class="detail-label">EMA20</div><div class="detail-value ${r.ema20&&r.currentPrice>r.ema20?'green':'red'}">${r.ema20?`$${r.ema20.toFixed(1)}`:'—'} (${r.ema20?(r.currentPrice>r.ema20?'arriba':'abajo'):'—'})</div></div>
         <div><div class="detail-label">EMA50</div><div class="detail-value ${r.ema50&&r.currentPrice>r.ema50?'green':'red'}">${r.ema50?`$${r.ema50.toFixed(1)}`:'—'} (${r.ema50?(r.currentPrice>r.ema50?'arriba':'abajo'):'—'})</div></div>
         <div><div class="detail-label">ATR stop (2x)</div><div class="detail-value red">${r.atrStop?`$${r.atrStop.toFixed(2)}`:'—'}</div></div>
         <div><div class="detail-label">Stop IBKR</div><div class="detail-value red">$${r.stop||'—'}</div></div>
         <div><div class="detail-label">Target</div><div class="detail-value green">${r.target?`$${r.target}`:'—'}</div></div>
-        <div><div class="detail-label">% sobre stop</div><div class="detail-value ${stopDiff&&stopDiff<5?'red':'}"> ${stopDiff!==null?`${stopDiff.toFixed(1)}%`:'—'}</div></div>
+        <div><div class="detail-label">% sobre stop</div><div class="detail-value ${stopDiff&&stopDiff<5?'red':'ú}"> ${stopDiff!==null?`${stopDiff.toFixed(1)}%`:'—'}</div></div>
       </div>
       ${reasons.length>0?`<div style="background:#0d0d0d;border-radius:8px;padding:12px;margin-top:4px"><div style="font-size:11px;color:#555;text-transform:uppercase;margin-bottom:8px">Señales detectadas</div>${reasons.map(r2=>`<div style="font-size:13px;color:${r.signal==='exit'?'#f87171':'#fb923c'};margin-bottom:4px">• ${r2}</div>`).join('')}</div>`:''}
     </div>`;
@@ -1008,7 +1008,7 @@ function buildCard(r,i,rank){
     </div>
     <div class="detail-grid">
       <div><div class="detail-label">Setup</div><div class="detail-value">${r.setup}</div></div>
-      <div><div class="detail-label">Fuerza</div><div class="detail-value ${r.strength==='high'?'green':''}">${ r.strength==='high'?'Alta ★':r.strength==='medium'?'Media':'Baja'}</div></div>
+      <div><div class="detail-label">Fuerza</div><div class="detail-value ${r.strength==='high'?'green':''}">${r.strength==='high'?'Alta ★':r.strength==='medium'?'Media':'Baja'}</div></div>
       <div><div class="detail-label">Precio</div><div class="detail-value">$${r.price.toFixed(2)}</div></div>
       <div><div class="detail-label">RSI (14)</div><div class="detail-value">${r.rsi} ${r.rsi<35?'↓ Sobrevendido':r.rsi>70?'↑ Sobrecomprado':'— Neutro'}</div></div>
       <div><div class="detail-label">EMA20</div><div class="detail-value ${r.ema20&&r.price>r.ema20?'green':'red'}">${r.ema20?`$${r.ema20.toFixed(1)}`:'—'}</div></div>
