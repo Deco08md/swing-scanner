@@ -456,17 +456,37 @@ function detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50){
 
   let setup='None',score=0;
 
-  // Setup 1 — Trend Following (Triple Confirmation — BEST)
+  // 52-week position from closes array (up to 252 trading days)
+  const lookback=Math.min(252,closes.length);
+  const annualSlice=closes.slice(-lookback);
+  const annualHigh=Math.max(...annualSlice),annualLow=Math.min(...annualSlice);
+  const annualRange=annualHigh-annualLow;
+  const annualPct=annualRange>0?Math.round((price-annualLow)/annualRange*100):50;
+
   const trendUp=ema20>ema50;
   const priceAboveBoth=price>ema20&&price>ema50;
-  const rsiHealthy=rsi>=45&&rsi<=72;
-  const volConfirm=volRatio>=1.3;
-  if(trendUp&&priceAboveBoth&&rsiHealthy&&volConfirm){
+  const rsiInRange=rsi>=45&&rsi<=72;
+  const emaSep=ema20/ema50;
+
+  // Setup 1 — Trend Following
+  // Requires stock NOT in bottom 30% of annual range — blocks mislabeled "recovery as trend"
+  if(trendUp&&priceAboveBoth&&rsiInRange&&annualPct>=30){
     setup='Trend Following';
-    score=70;
-    if(rsi>=55&&rsi<=70)score+=15; // ideal RSI zone
-    if(volRatio>=1.8)score+=10;
-    if(ema20/ema50>1.02)score+=5; // EMAs well separated
+    score=44; // base — same as before
+    // RSI quality (0-15 pts): available regardless of volume
+    if(rsi>=55&&rsi<=70)score+=15;
+    else if(rsi>=50&&rsi<55)score+=7;
+    // Volume (0-20 pts): continuous bonus, not a gate
+    if(volRatio>=2.0)score+=20;
+    else if(volRatio>=1.3)score+=15;
+    else if(volRatio>=1.0)score+=8;
+    else if(volRatio>=0.7)score+=3;
+    // EMA alignment (0-8 pts)
+    if(emaSep>1.02)score+=8;
+    else if(emaSep>1.01)score+=4;
+    // Annual range position bonus (0-8 pts): mid/upper range is healthier trend
+    if(annualPct>=55)score+=8;
+    else if(annualPct>=38)score+=3;
   }
   // Setup 2 — Breakout sobre resistencia con volumen
   else if(volRatio>=1.8&&price>calcEMA(closes.slice(0,-1),20)&&rsi>=50){
@@ -489,13 +509,7 @@ function detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50){
     score=bbWidth<0.05?70:56;
     score+=volRatio<1.0?8:0;
   }
-  // Weak signals
-  else if(trendUp&&price>ema20&&rsi>=45&&rsi<=65){
-    setup='Trend Following';score=44;
-    if(rsi>=55&&rsi<=70)score+=5;
-    if(ema20/ema50>1.02)score+=3;
-    if(price/ema20>1.02)score+=2;
-  }
+  // Weak breakout
   else if(price>ema20&&volRatio>=1.5&&rsi>=50){
     setup='Breakout';score=40;
     if(rsi>=55&&rsi<=72)score+=4;
@@ -967,7 +981,7 @@ function buildCard(r,i,rank){
   // Rank badge — only for tier-1 results
   const rankNum=rank||0;
   const rankClass=rankNum===1?'rank-1':rankNum===2?'rank-2':rankNum===3?'rank-3':'rank-other';
-  const rankBadge=(tier.tier===1&&rankNum>0)?`<span class="rank-badge ${rankClass}">${rankNum}</span> `:'';
+  const rankBadge=(tier.tier===1&&rankNum>0)?`<span class="rank-badge ${rankClass}">${rankNum}</span> `:''
   // Tier badge + criteria row
   let tierBadgeHtml,criteriaHtml='';
   if(tier.tier===1){
@@ -1007,7 +1021,7 @@ function buildCard(r,i,rank){
     </div>
     <div class="detail-grid">
       <div><div class="detail-label">Setup</div><div class="detail-value">${r.setup}</div></div>
-      <div><div class="detail-label">Fuerza</div><div class="detail-value ${r.strength==='high'?'green':''}">${ r.strength==='high'?'Alta ★':r.strength==='medium'?'Media':'Baja'}</div></div>
+      <div><div class="detail-label">Fuerza</div><div class="detail-value ${r.strength==='high'?'green':''}">${r.strength==='high'?'Alta ★':r.strength==='medium'?'Media':'Baja'}</div></div>
       <div><div class="detail-label">Precio</div><div class="detail-value">$${r.price.toFixed(2)}</div></div>
       <div><div class="detail-label">RSI (14)</div><div class="detail-value">${r.rsi} ${r.rsi<35?'↓ Sobrevendido':r.rsi>70?'↑ Sobrecomprado':'— Neutro'}</div></div>
       <div><div class="detail-label">EMA20</div><div class="detail-value ${r.ema20&&r.price>r.ema20?'green':'red'}">${r.ema20?`$${r.ema20.toFixed(1)}`:'—'}</div></div>
@@ -1076,3 +1090,4 @@ renderManualTags();renderHistory();
 </script>
 
 </body>
+</html>
