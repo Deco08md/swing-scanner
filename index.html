@@ -686,13 +686,13 @@ function renderPortfolio(results){
         <div><div class="detail-label">Señal</div><div class="detail-value ${r.signal==='exit'?'red':r.signal==='caution'?'amber':'green'}">${sigLabel}</div></div>
         <div><div class="detail-label">Precio actual</div><div class="detail-value">$${r.currentPrice.toFixed(2)}</div></div>
         <div><div class="detail-label">Entry / P&L</div><div class="detail-value">$${r.entry} / <span style="${plColor}">${r.plPct>=0?'+':''}${r.plPct.toFixed(1)}%</span></div></div>
-        <div><div class="detail-label">RSI (14)</div><div class="detail-value ${r.rsi<35?'green':r.rsi>70?'red':''}">${r.rsi} ${r.rsi<35?'— Sobrevendido':r.rsi>70?'— Sobrecomprado':'— Neutro'}</div></div>
+        <div><div class="detail-label">RSI (14)</div><div class="detail-value ${r.rsi<35?'green':r.rsi>70?'red':''}">${ r.rsi} ${r.rsi<35?'— Sobrevendido':r.rsi>70?'— Sobrecomprado':'— Neutro'}</div></div>
         <div><div class="detail-label">EMA20</div><div class="detail-value ${r.ema20&&r.currentPrice>r.ema20?'green':'red'}">${r.ema20?`$${r.ema20.toFixed(1)}`:'—'} (${r.ema20?(r.currentPrice>r.ema20?'arriba':'abajo'):'—'})</div></div>
         <div><div class="detail-label">EMA50</div><div class="detail-value ${r.ema50&&r.currentPrice>r.ema50?'green':'red'}">${r.ema50?`$${r.ema50.toFixed(1)}`:'—'} (${r.ema50?(r.currentPrice>r.ema50?'arriba':'abajo'):'—'})</div></div>
         <div><div class="detail-label">ATR stop (2x)</div><div class="detail-value red">${r.atrStop?`$${r.atrStop.toFixed(2)}`:'—'}</div></div>
         <div><div class="detail-label">Stop IBKR</div><div class="detail-value red">$${r.stop||'—'}</div></div>
         <div><div class="detail-label">Target</div><div class="detail-value green">${r.target?`$${r.target}`:'—'}</div></div>
-        <div><div class="detail-label">% sobre stop</div><div class="detail-value ${stopDiff&&stopDiff<5?'red':''}">${stopDiff!==null?`${stopDiff.toFixed(1)}%`:'—'}</div></div>
+        <div><div class="detail-label">% sobre stop</div><div class="detail-value ${stopDiff&&stopDiff<5?'red':''}">${ stopDiff!==null?`${stopDiff.toFixed(1)}%`:'—'}</div></div>
       </div>
       ${reasons.length>0?`<div style="background:#0d0d0d;border-radius:8px;padding:12px;margin-top:4px"><div style="font-size:11px;color:#555;text-transform:uppercase;margin-bottom:8px">Señales detectadas</div>${reasons.map(r2=>`<div style="font-size:13px;color:${r.signal==='exit'?'#f87171':'#fb923c'};margin-bottom:4px">• ${r2}</div>`).join('')}</div>`:''}
     </div>`;
@@ -971,6 +971,14 @@ function getWhyAttractive(r){
 function buildCard(r,i,rank){
   const tier=r._tier||calcTierLevel(r);
   const rsiColor=r.rsi<35?'#4ade80':r.rsi<50?'#fb923c':r.rsi>70?'#f87171':'#60a5fa';
+  // Score breakdown for audit trail
+  const _emaSep=r.ema20&&r.ema50?r.ema20/r.ema50:1;
+  const _emaSepPct=r.ema20&&r.ema50?((_emaSep-1)*100).toFixed(1):null;
+  const _rsiPts=r.setup==='Trend Following'?(r.rsi>=55&&r.rsi<=70?15:r.rsi>=50&&r.rsi<55?7:0):0;
+  const _volPts=r.setup==='Trend Following'?(r.volRatio>=2.0?20:r.volRatio>=1.3?15:r.volRatio>=1.0?8:r.volRatio>=0.7?3:0):0;
+  const _emaPts=r.setup==='Trend Following'?(_emaSep>1.02?8:_emaSep>1.01?4:0):0;
+  const _rangePts=r.setup==='Trend Following'?(r.w52Pct>=55?8:r.w52Pct>=38?3:0):0;
+  const _regimePts=r.regimeBonus||0;
   // Card class: tier takes priority, manual overlay on top
   const tierCardClass=tier.tier===1?'tier-1':tier.tier===2?'tier-2':'tier-3';
   const cardClass=r.isManual?`manual-result ${tierCardClass}`:tierCardClass;
@@ -981,7 +989,7 @@ function buildCard(r,i,rank){
   // Rank badge — only for tier-1 results
   const rankNum=rank||0;
   const rankClass=rankNum===1?'rank-1':rankNum===2?'rank-2':rankNum===3?'rank-3':'rank-other';
-  const rankBadge=(tier.tier===1&&rankNum>0)?`<span class="rank-badge ${rankClass}">${rankNum}</span> `:''
+  const rankBadge=(tier.tier===1&&rankNum>0)?`<span class="rank-badge ${rankClass}">${rankNum}</span> `:'';
   // Tier badge + criteria row
   let tierBadgeHtml,criteriaHtml='';
   if(tier.tier===1){
@@ -1033,6 +1041,7 @@ function buildCard(r,i,rank){
       <div><div class="detail-label">Vol ratio</div><div class="detail-value">${r.volRatio.toFixed(1)}x promedio</div></div>
       <div><div class="detail-label">Posición 52W</div><div class="detail-value ${r.w52Val==='cheap'?'green':r.w52Val==='mid'?'amber':'red'}">${r.w52Pct}% — ${r.w52Val==='cheap'?'Barato':r.w52Val==='mid'?'Zona media':'Caro'}</div></div>
     </div>
+    ${r.setup==='Trend Following'?`<div style="background:#0d0d0d;border:1px solid #222;border-radius:8px;padding:10px;margin-top:8px"><div style="font-size:10px;color:#444;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Desglose score</div><div style="font-size:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center"><span style="color:#555">44 base</span>${_rsiPts>0?`<span style="color:#4ade80">+${_rsiPts} RSI</span>`:''}<span style="color:${_volPts>0?'#4ade80':'#444'}">+${_volPts} vol (${r.volRatio.toFixed(1)}x)</span><span style="color:${_emaPts>0?'#4ade80':'#444'}">+${_emaPts} EMAs (${_emaSepPct!==null?_emaSepPct+'%':'—'})</span><span style="color:${_rangePts>0?'#4ade80':'#444'}">+${_rangePts} rango (${r.w52Pct}%)</span>${_regimePts>0?`<span style="color:#60a5fa">+${_regimePts} régimen</span>`:''}<span style="color:#fff;font-weight:600">= ${r.score}/95</span></div></div>`:''}
     ${r.setupWarning?`<div style="background:#1a0f00;border:1px solid #fb923c44;border-radius:8px;padding:10px;margin-top:8px;font-size:12px;color:#fb923c">⚠ ${r.setupWarning}</div>`:''}
     ${whyReasons.length>0?`<div style="background:#0a1a0a;border:1px solid #1a3a1a;border-radius:8px;padding:12px;margin-top:4px"><div style="font-size:11px;color:#444;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">Por qué es atractivo</div>${whyReasons.map(w=>`<div style="font-size:13px;color:#6dbb6d;margin-bottom:4px">✓ ${w}</div>`).join('')}</div>`:''}
   </div>`;
