@@ -495,6 +495,9 @@ function calcMACD(closes){
   return{macd:Math.round(macdLine*100)/100,signal:Math.round(signalLine*100)/100,hist:Math.round((macdLine-signalLine)*100)/100};
 }
 
+// ── VOLUME BASELINE (median of last 20 days, robust to expiry spikes) ──
+function medVol(arr){const s=[...arr].sort((a,b)=>a-b);return s[Math.floor(s.length/2)]||0;}
+
 // ── LINEAR INTERPOLATION SCORER ────────────────────────────────────
 // pts = [[x0,y0],[x1,y1],...] sorted ascending; returns interpolated y
 function sLerp(v,pts){
@@ -512,7 +515,7 @@ function detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50){
   const price=closes[closes.length-1];
   const prevPrice=closes[closes.length-2];
   const prevEma20=calcEMA(closes.slice(0,-1),20);
-  const avgVol=volumes.slice(-20).reduce((a,b)=>a+b,0)/20;
+  const avgVol=medVol(volumes.slice(-20)); // median: robust to opex/rebalancing spikes
   const todayVol=volumes[volumes.length-1]||0;
   const prevDayVol=volumes[volumes.length-2]||todayVol;
   const lastVol=(avgVol>0&&todayVol<avgVol*0.4&&prevDayVol>0)?prevDayVol:todayVol;
@@ -558,30 +561,38 @@ function detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50){
   // Setup 2 — Breakout sobre resistencia con volumen
   else if(volRatio>=1.8&&price>calcEMA(closes.slice(0,-1),20)&&rsi>=50){
     setup='Breakout';
-    score=volRatio>=2.5?75:volRatio>=2.0?65:55;
-    score+=rsi>=55&&rsi<=72?10:0;
+    score=45;
+    score+=sLerp(volRatio,[[1.8,0],[2.0,12],[2.5,22],[3.0,28],[4.0,32]]);
+    score+=sLerp(rsi,[[50,0],[55,5],[60,8],[65,6],[72,2],[75,0]]);
     const chg=(price-prevPrice)/prevPrice*100;
-    score+=chg>=1.5?10:0;
+    score+=sLerp(chg,[[0,0],[1.0,4],[1.5,8],[2.5,12],[4.0,15]]);
   }
   // Setup 3 — Pullback sobre EMA20 en tendencia alcista
   else if(trendUp&&prevPrice<prevEma20&&price>ema20&&rsi>=40&&rsi<=65){
     setup='Pullback EMA';
-    score=65;
-    score+=volRatio>=1.2?10:0;
-    score+=rsi>=45&&rsi<=60?10:0;
+    score=50;
+    score+=sLerp(volRatio,[[0,0],[0.8,2],[1.0,5],[1.2,10],[1.5,14],[2.0,18]]);
+    score+=sLerp(rsi,[[40,0],[45,5],[50,10],[55,10],[60,6],[65,0]]);
   }
   // Setup 4 — Squeeze (BB compression)
   else if(bbWidth<0.08&&rsi>=38&&rsi<=62){
     setup='Squeeze';
-    score=bbWidth<0.05?70:56;
-    score+=volRatio<1.0?8:0;
+    score=50;
+    // tighter bands = more stored energy (inverted: lower bbWidth = more pts)
+    score+=sLerp(bbWidth,[[0.01,22],[0.03,16],[0.05,8],[0.08,0]]);
+    // quiet accumulation is healthier; peaks at mid-low vol
+    score+=sLerp(volRatio,[[0,4],[0.5,8],[0.8,6],[1.0,3],[1.5,1],[2.5,0]]);
+    // centered RSI = balanced directional potential
+    score+=Math.max(0,5-Math.round(Math.abs(rsi-50)/2.5));
   }
   // Weak breakout
   else if(price>ema20&&volRatio>=1.5&&rsi>=50){
-    setup='Breakout';score=40;
-    if(rsi>=55&&rsi<=72)score+=4;
-    const chg=(price-prevPrice)/prevPrice*100;
-    if(chg>=1.0)score+=2;
+    setup='Breakout';
+    score=36;
+    score+=sLerp(volRatio,[[1.5,0],[1.7,3],[2.0,6]]);
+    score+=sLerp(rsi,[[50,0],[55,3],[60,5],[65,4],[72,1],[75,0]]);
+    const chgW=(price-prevPrice)/prevPrice*100;
+    score+=sLerp(chgW,[[0,0],[0.5,1],[1.0,3],[2.0,5]]);
   }
 
   score=Math.min(score,95);
@@ -598,7 +609,7 @@ function detectExitSignal(closes,highs,lows,volumes,position){
   const rsi=calcRSI(closes);
   const atr=calcATR(highs,lows,closes,14);
   const atrStop=atr?Math.round((price-2*atr)*100)/100:null;
-  const avgVol=volumes.slice(-20).reduce((a,b)=>a+b,0)/20;
+  const avgVol=medVol(volumes.slice(-20));
   const todayVolP=volumes[volumes.length-1]||0;
   const prevDayVolP=volumes[volumes.length-2]||todayVolP;
   const lastVol=(avgVol>0&&todayVolP<avgVol*0.4&&prevDayVolP>0)?prevDayVolP:todayVolP;
@@ -1117,7 +1128,7 @@ function toggleDetail(id){const el=document.getElementById(id);if(el)el.style.di
 function openAnalysis(i){
   const r=(window._fr||allResults)[i];if(!r)return;
   const zone=r.w52Val==='cheap'?`zona barata (${r.w52Pct}%)`:`zona ${r.w52Val==='mid'?'media':'cara'} (${r.w52Pct}%)`;
-  const msg=`Analiza ${r.t} (${r.n}) para swing trade hoy. Setup Triple Confirmation: ${r.setup}. RSI: ${r.rsi}. Precio: $${r.price}. EMA20: $${r.ema20||'—'}, EMA50: $${r.ema50||'—'}. ATR: $${r.atr||'—'}. ATR Stop (2x): $${r.stopLoss}. Vol ratio: ${r.volRatio}x. Rango 52W: $${r.w52Low}–$${r.w52High} en ${zone}. Score: ${r.score}/95. Dame: 1) análisis técnico 2) catalizadores fundamentales 3) niveles soporte/resistencia 4) precio de entrada específico 5) riesgos. ¿Es buena entrada?`;
+  const msg=`Analiza ${r.t} (${r.n}) para swing trade hoy. Setup: ${r.setup}. Score: ${r.score}/95. Precio: $${r.price.toFixed(2)}. Target: $${r.target.toFixed(2)} (+${Math.round((r.target/r.price-1)*100)}%). Stop ATR (2x): $${r.stopLoss.toFixed(2)}. R/R: ${r.rr}:1. RSI: ${r.rsi}. EMA20: $${r.ema20?r.ema20.toFixed(2):'—'}, EMA50: $${r.ema50?r.ema50.toFixed(2):'—'}. ATR: $${r.atr?r.atr.toFixed(2):'—'}. Vol ratio: ${r.volRatio}x. Rango 52W: $${r.w52Low}–$${r.w52High} en ${zone}. Dame: 1) análisis técnico 2) catalizadores/riesgos próximos 3) niveles soporte/resistencia 4) ¿confirmas entrada aquí o esperas retroceso? 5) posición en el sector.`;
   navigator.clipboard.writeText(msg).then(()=>alert('✓ Copiado. Pégalo en Claude.')).catch(()=>alert('Copia:\n\n'+msg));
 }
 
