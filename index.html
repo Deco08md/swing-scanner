@@ -504,7 +504,7 @@ function sLerp(v,pts){
   if(v<=pts[0][0])return pts[0][1];
   if(v>=pts[pts.length-1][0])return pts[pts.length-1][1];
   for(let j=1;j<pts.length;j++){
-    if(v<=pts[j][0]){const t=(v-pts[j-1][0])/(pts[j][0]-pts[j-1][0]);return Math.round(pts[j-1][1]+(pts[j][1]-pts[j-1][1])*t);}
+    if(v<=pts[j][0]){const t=(v-pts[j-1][0])/(pts[j][0]-pts[j-1][0]);return pts[j-1][1]+(pts[j][1]-pts[j-1][1])*t;}
   }
   return pts[pts.length-1][1];
 }
@@ -595,7 +595,7 @@ function detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50){
     score+=sLerp(chgW,[[0,0],[0.5,1],[1.0,3],[2.0,5]]);
   }
 
-  score=Math.min(score,95);
+  score=Math.round(Math.min(score,95));
   const strength=score>=65?'high':score>=42?'medium':'low';
   return{setup,score,strength,volRatio,atrStop,ema20,ema50,atr};
 }
@@ -1052,10 +1052,10 @@ function buildCard(r,i,rank){
   // Score breakdown for audit trail
   const _emaSep=r.ema20&&r.ema50?r.ema20/r.ema50:1;
   const _emaSepPct=r.ema20&&r.ema50?((_emaSep-1)*100).toFixed(1):null;
-  const _rsiPts=r.setup==='Trend Following'?sLerp(r.rsi,[[45,1],[50,6],[55,12],[60,15],[65,13],[70,7],[72,3],[73,0]]):0;
-  const _volPts=r.setup==='Trend Following'?sLerp(r.volRatio,[[0,0],[0.5,1],[0.7,3],[1.0,8],[1.3,13],[1.8,18],[2.0,20]]):0;
-  const _emaPts=r.setup==='Trend Following'?sLerp((_emaSep-1)*100,[[0,0],[0.5,1],[1.0,3],[2.0,7],[3.0,9],[5.0,10]]):0;
-  const _rangePts=r.setup==='Trend Following'?sLerp(r.w52Pct,[[30,0],[38,2],[45,4],[55,6],[65,8],[75,10]]):0;
+  const _rsiPts=r.setup==='Trend Following'?Math.round(sLerp(r.rsi,[[45,1],[50,6],[55,12],[60,15],[65,13],[70,7],[72,3],[73,0]])):0;
+  const _volPts=r.setup==='Trend Following'?Math.round(sLerp(r.volRatio,[[0,0],[0.5,1],[0.7,3],[1.0,8],[1.3,13],[1.8,18],[2.0,20]])):0;
+  const _emaPts=r.setup==='Trend Following'?Math.round(sLerp((_emaSep-1)*100,[[0,0],[0.5,1],[1.0,3],[2.0,7],[3.0,9],[5.0,10]])):0;
+  const _rangePts=r.setup==='Trend Following'?Math.round(sLerp(r.w52Pct,[[30,0],[38,2],[45,4],[55,6],[65,8],[75,10]])):0;
   const _regimePts=r.regimeBonus||0;
   // Card class: tier takes priority, manual overlay on top
   const tierCardClass=tier.tier===1?'tier-1':tier.tier===2?'tier-2':'tier-3';
