@@ -462,10 +462,16 @@ function calcEMA(closes,period){
 }
 
 function calcRSI(closes,period=14){
-  if(closes.length<period+1)return 50;
-  let g=0,l=0;
-  for(let i=closes.length-period;i<closes.length;i++){const d=closes[i]-closes[i-1];if(d>0)g+=d;else l-=d;}
-  const ag=g/period,al=l/period;
+  // Wilder's smoothed RSI (standard: IBKR, TradingView). Needs ~100+ bars to converge.
+  if(closes.length<period+2)return 50;
+  let ag=0,al=0;
+  for(let i=1;i<=period;i++){const d=closes[i]-closes[i-1];if(d>0)ag+=d;else al-=d;}
+  ag/=period;al/=period;
+  for(let i=period+1;i<closes.length;i++){
+    const d=closes[i]-closes[i-1];
+    ag=(ag*(period-1)+(d>0?d:0))/period;
+    al=(al*(period-1)+(d<0?-d:0))/period;
+  }
   if(al===0)return 100;
   return Math.round(100-100/(1+ag/al));
 }
