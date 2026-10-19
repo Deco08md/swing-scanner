@@ -929,7 +929,7 @@ async function runScan(){
   document.getElementById('results-container').innerHTML=sk;
 
   allResults=[];let done=0,errors=0;
-  const BATCH=8;
+  const BATCH=4;
   for(let i=0;i<allTickers.length;i+=BATCH){
     const batch=allTickers.slice(i,Math.min(i+BATCH,allTickers.length));
     const batchRes=await Promise.all(batch.map(t=>processStock(t,manualSet.has(t)).catch(()=>null)));
@@ -937,6 +937,7 @@ async function runScan(){
     const pct=Math.round(done/allTickers.length*100);
     document.getElementById('progress-fill').style.width=pct+'%';
     document.getElementById('progress-text').textContent=`Analizando ${done}/${allTickers.length}... (${pct}%)`;
+    if(i+BATCH<allTickers.length)await new Promise(r=>setTimeout(r,400));
   }
   pw.style.display='none';btn.disabled=false;btn.textContent='▶ Ejecutar Scan';
 
