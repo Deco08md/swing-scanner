@@ -684,7 +684,9 @@ async function runPortfolioScan(){
   const btn=document.getElementById('port-scan-btn');
   btn.disabled=true;btn.textContent='... Analizando';
   document.getElementById('portfolio-container').innerHTML='<div class="empty-state"><div style="color:#555">Obteniendo datos reales de tus posiciones...</div></div>';
-  const portRes=await Promise.all(PORTFOLIO.map(async pos=>{
+  const results=[];
+  for(let i=0;i<PORTFOLIO.length;i++){
+    const pos=PORTFOLIO[i];
     const result=await fetchYahoo(pos.t);
     if(result){
       try{
@@ -701,12 +703,10 @@ async function runPortfolioScan(){
         const exitData=detectExitSignal(closes,highs,lows,volumes,pos);
         const plTotal=Math.round((currentPrice-pos.entry)*pos.shares*100)/100;
         const plPct=Math.round((currentPrice/pos.entry-1)*10000)/100;
-        return{...pos,...exitData,currentPrice,changePct,plTotal,plPct};
-      }catch(e){return{...pos,signal:'neutral',exitReasons:[],cautionReasons:[],currentPrice:pos.entry,changePct:0,plTotal:0,plPct:0,atrStop:null,rsi:50}}
+        results.push({...pos,...exitData,currentPrice,changePct,plTotal,plPct});
+      }catch(e){results.push({...pos,signal:'neutral',exitReasons:[],cautionReasons:[],currentPrice:pos.entry,changePct:0,plTotal:0,plPct:0,atrStop:null,rsi:50})}
     }
-    return null;
-  }));
-  const results=portRes.filter(Boolean);
+  }
   btn.disabled=false;btn.textContent='▶ Analizar portafolio';
   renderPortfolio(results);
   const now=new Date();
@@ -929,15 +929,13 @@ async function runScan(){
   document.getElementById('results-container').innerHTML=sk;
 
   allResults=[];let done=0,errors=0;
-  const BATCH=4;
-  for(let i=0;i<allTickers.length;i+=BATCH){
-    const batch=allTickers.slice(i,Math.min(i+BATCH,allTickers.length));
-    const batchRes=await Promise.all(batch.map(t=>processStock(t,manualSet.has(t)).catch(()=>null)));
-    batchRes.forEach(r=>{if(r)allResults.push(r);else errors++;done++;});
+  for(let i=0;i<allTickers.length;i++){
+    const r=await processStock(allTickers[i],manualSet.has(allTickers[i]));
+    if(r)allResults.push(r);else errors++;
+    done++;
     const pct=Math.round(done/allTickers.length*100);
     document.getElementById('progress-fill').style.width=pct+'%';
-    document.getElementById('progress-text').textContent=`Analizando ${done}/${allTickers.length}... (${pct}%)`;
-    if(i+BATCH<allTickers.length)await new Promise(r=>setTimeout(r,400));
+    document.getElementById('progress-text').textContent=`Analizando ${done}/${allTickers.length}: ${allTickers[i]}... (${pct}%)`;
   }
   pw.style.display='none';btn.disabled=false;btn.textContent='▶ Ejecutar Scan';
 
