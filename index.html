@@ -417,16 +417,22 @@ async function fetchYahoo(ticker){
 async function fetchStooq(ticker){
   const st=ticker.includes('.')?ticker:`${ticker}.US`;
   const url=`https://stooq.com/q/d/l/?s=${st}&i=d`;
+  // Multiple proxies as fallback: if allorigins.win/corsproxy.io are rate-limited,
+  // codetabs.com and allorigins /get endpoint act as backup paths.
   const proxies=[
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(url)}`
+    {u:`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,json:false},
+    {u:`https://corsproxy.io/?url=${encodeURIComponent(url)}`,json:false},
+    {u:`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,json:false},
+    {u:`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,json:true}
   ];
   let csv=null;
-  for(const proxy of proxies){
+  for(const p of proxies){
     try{
-      const resp=await fetch(proxy,{signal:AbortSignal.timeout(15000)});
+      const resp=await fetch(p.u,{signal:AbortSignal.timeout(15000)});
       if(!resp.ok)continue;
-      const text=await resp.text();
+      let text;
+      if(p.json){const j=await resp.json();text=j.contents||'';}
+      else text=await resp.text();
       if(text&&text.length>200&&!text.includes('No data')){csv=text;break;}
     }catch(e){continue}
   }
