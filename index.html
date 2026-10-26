@@ -395,9 +395,19 @@ let filters={setup:'all',str:'all',val:'all',src:'all'};
 
 // ── FETCH ──────────────────────────────────────────────────────────
 async function fetchYahoo(ticker){
+  // Try Yahoo Finance direct first (no proxy) — works if Yahoo allows CORS
+  try{
+    const direct=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y`,{signal:AbortSignal.timeout(4000)});
+    if(direct.ok){
+      const raw=await direct.json();
+      const result=raw?.chart?.result?.[0];
+      if(result?.indicators?.quote?.[0]?.close)return result;
+    }
+  }catch(e){}
+  // CORS proxies for Yahoo (short timeout — they usually fail fast with 4xx)
   for(let i=0;i<PROXIES.length;i++){
     try{
-      const resp=await fetch(PROXIES[i](ticker),{signal:AbortSignal.timeout(3000)});
+      const resp=await fetch(PROXIES[i](ticker),{signal:AbortSignal.timeout(2000)});
       if(!resp.ok)continue;
       const raw=await resp.json();
       let data=raw;
@@ -417,8 +427,6 @@ async function fetchYahoo(ticker){
 async function fetchStooq(ticker){
   const st=ticker.includes('.')?ticker:`${ticker}.US`;
   const url=`https://stooq.com/q/d/l/?s=${st}&i=d`;
-  // Multiple proxies as fallback: if allorigins.win/corsproxy.io are rate-limited,
-  // codetabs.com and allorigins /get endpoint act as backup paths.
   const proxies=[
     {u:`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,json:false},
     {u:`https://corsproxy.io/?url=${encodeURIComponent(url)}`,json:false},
@@ -428,7 +436,9 @@ async function fetchStooq(ticker){
   let csv=null;
   for(const p of proxies){
     try{
-      const resp=await fetch(p.u,{signal:AbortSignal.timeout(15000)});
+      // 4s timeout per proxy: Stooq proxies hang when blocked — short timeout
+      // means we fail fast (4×4s=16s) vs the original 15s hang (4×15s=60s)
+      const resp=await fetch(p.u,{signal:AbortSignal.timeout(4000)});
       if(!resp.ok)continue;
       let text;
       if(p.json){const j=await resp.json();text=j.contents||'';}
