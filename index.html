@@ -394,7 +394,28 @@ let manualTickers=JSON.parse(localStorage.getItem('manual_tickers_v5')||'[]');
 let filters={setup:'all',str:'all',val:'all',src:'all'};
 
 // ── FETCH ──────────────────────────────────────────────────────────
+async function fetchFromCache(ticker){
+  try{
+    const resp=await fetch(`./data/${ticker}.json`,{signal:AbortSignal.timeout(5000)});
+    if(!resp.ok)return null;
+    const d=await resp.json();
+    if(!d.closes||d.closes.length<52)return null;
+    const n=d.closes.length;
+    return{
+      meta:{regularMarketPrice:d.closes[n-1],chartPreviousClose:d.closes[n-2],
+        symbol:ticker,fiftyTwoWeekHigh:Math.max(...d.closes.slice(-260)),
+        fiftyTwoWeekLow:Math.min(...d.closes.slice(-260))},
+      timestamp:d.dates.map(dt=>new Date(dt+'T00:00:00Z').getTime()/1000),
+      indicators:{quote:[{close:d.closes,high:d.highs,low:d.lows,volume:d.volumes,open:d.closes}]},
+      _cached:d.updated
+    };
+  }catch(e){return null}
+}
+
 async function fetchYahoo(ticker){
+  // Try static cache first (populated daily by GitHub Actions — no CORS issues)
+  const cached=await fetchFromCache(ticker);
+  if(cached)return cached;
   // Try Yahoo Finance direct first (no proxy) — works if Yahoo allows CORS
   try{
     const direct=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y`,{signal:AbortSignal.timeout(4000)});
