@@ -39,51 +39,14 @@ TICKERS = [
     'MELI','CPA','TIGO',
 ]
 
-
-def fetch_stooq(ticker, session):
-    st = f"{ticker}.US" if '.' not in ticker else ticker
-    url = f"https://stooq.com/q/d/l/?s={st.lower()}&i=d"
-    try:
-        resp = session.get(url, timeout=15)
-        if resp.status_code != 200:
-            return None
-        text = resp.text.strip()
-        if not text or 'No data' in text or len(text) < 100:
-            return None
-        lines = [l for l in text.split('\n') if l and not l.startswith('Date')]
-        if len(lines) < 52:
-            return None
-        recent = lines[-260:]
-        closes, highs, lows, volumes, dates = [], [], [], [], []
-        for line in recent:
-            p = line.split(',')
-            if len(p) < 6:
-                continue
-            try:
-                c = float(p[4])
-                h = float(p[2]) if p[2] else c
-                lo = float(p[3]) if p[3] else c
-                v = int(float(p[5])) if p[5] else 0
-                if c <= 0:
-                    continue
-                closes.append(round(c, 4))
-                highs.append(round(h, 4))
-                lows.append(round(lo, 4))
-                volumes.append(v)
-                dates.append(p[0])
-            except Exception:
-                continue
-        if len(closes) < 52:
-            return None
-        return {'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes, 'dates': dates}
-    except Exception:
-        return None
+# Short timeouts: (connect_seconds, read_seconds)
+TIMEOUT = (5, 8)
 
 
 def fetch_yahoo(ticker, session):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=15mo&events=history"
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=15mo"
     try:
-        resp = session.get(url, timeout=15)
+        resp = session.get(url, timeout=TIMEOUT)
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -123,6 +86,46 @@ def fetch_yahoo(ticker, session):
         return None
 
 
+def fetch_stooq(ticker, session):
+    st = f"{ticker}.US" if '.' not in ticker else ticker
+    url = f"https://stooq.com/q/d/l/?s={st.lower()}&i=d"
+    try:
+        resp = session.get(url, timeout=TIMEOUT)
+        if resp.status_code != 200:
+            return None
+        text = resp.text.strip()
+        if not text or 'No data' in text or len(text) < 100:
+            return None
+        lines = [l for l in text.split('\n') if l and not l.startswith('Date')]
+        if len(lines) < 52:
+            return None
+        recent = lines[-260:]
+        closes, highs, lows, volumes, dates = [], [], [], [], []
+        for line in recent:
+            p = line.split(',')
+            if len(p) < 6:
+                continue
+            try:
+                c = float(p[4])
+                h = float(p[2]) if p[2] else c
+                lo = float(p[3]) if p[3] else c
+                v = int(float(p[5])) if p[5] else 0
+                if c <= 0:
+                    continue
+                closes.append(round(c, 4))
+                highs.append(round(h, 4))
+                lows.append(round(lo, 4))
+                volumes.append(v)
+                dates.append(p[0])
+            except Exception:
+                continue
+        if len(closes) < 52:
+            return None
+        return {'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes, 'dates': dates}
+    except Exception:
+        return None
+
+
 os.makedirs('data', exist_ok=True)
 
 session = requests.Session()
@@ -133,11 +136,12 @@ success = 0
 failed = []
 
 for ticker in TICKERS:
-    data = fetch_stooq(ticker, session)
-    source = 'stooq'
+    # Yahoo first (faster and more reliable from server-side), Stooq as fallback
+    data = fetch_yahoo(ticker, session)
+    source = 'yahoo'
     if not data:
-        data = fetch_yahoo(ticker, session)
-        source = 'yahoo'
+        data = fetch_stooq(ticker, session)
+        source = 'stooq'
 
     if data:
         out = {'t': ticker, 'updated': today, 'src': source, **data}
@@ -149,7 +153,7 @@ for ticker in TICKERS:
         print(f"✗ {ticker} FAILED")
         failed.append(ticker)
 
-    time.sleep(0.35)
+    time.sleep(0.3)
 
 print(f"\n{success}/{len(TICKERS)} ok", end='')
 if failed:
