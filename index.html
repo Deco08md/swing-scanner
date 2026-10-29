@@ -409,7 +409,8 @@ async function fetchFromCache(ticker){
         fiftyTwoWeekLow:Math.min(...d.closes.slice(-260))},
       timestamp:d.dates.map(dt=>new Date(dt+'T00:00:00Z').getTime()/1000),
       indicators:{quote:[{close:d.closes,high:d.highs,low:d.lows,volume:d.volumes,open:d.closes}]},
-      _cached:d.updated
+      _cached:d.updated,
+      _cachedDate:d.dates[d.dates.length-1]
     };
   }catch(e){return null}
 }
@@ -525,6 +526,26 @@ function rsiSelfTest(){
   console.assert(calcRSI(flat)===100,'RSI flat series should be 100');
   console.log('RSI self-test passed. Sample RSI:',rsi);
 }
+
+// ── DATE / FRESHNESS HELPERS ──────────────────────────────────────
+function calcTradingDaysOld(dateStr){
+  try{
+    const data=new Date(dateStr+'T00:00:00Z');
+    const now=new Date();
+    const today=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));
+    if(data>=today)return 0;
+    let count=0,d=new Date(data);
+    while(d<today){d.setUTCDate(d.getUTCDate()+1);const dow=d.getUTCDay();if(dow!==0&&dow!==6)count++;}
+    return count;
+  }catch(e){return 0;}
+}
+function fmtShortDate(iso){
+  if(!iso)return'';
+  const months=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const[,m,d]=iso.split('-');
+  return`${parseInt(d)}-${months[parseInt(m)-1]}`;
+}
+function staleDateColor(days){return days<=1?'#666':days===2?'#fb923c':'#f87171';}
 
 // ── INDICATORS ────────────────────────────────────────────────────
 function calcEMA(closes,period){
@@ -753,10 +774,17 @@ async function processStock(ticker,isManual=false){
     const realRR126=risk>0?Math.round(Math.max(0,recentHigh126-price)/risk*10)/10:null;
     // P1: earnings filter
     const earn=earningsInfo(ticker);
-    // P4: bar source indicator
-    const barSource=result._cached?`cierre ${result._cached}`:'en vivo';
+    // P4: bar source — use actual last-bar date, not workflow run date
+    const priceDate=result._cachedDate||null;
+    const barSource=priceDate?`cierre ${priceDate}`:(result._cached?`run ${result._cached}`:'en vivo');
+    const tradingDaysOld=priceDate?calcTradingDaysOld(priceDate):0;
+    const isStale=tradingDaysOld>=2;
+    // Gap detection: large move on last bar (possible earnings or corporate event)
+    const prevClose2=closes.length>=2?closes[closes.length-2]:0;
+    const lastBarGapPct=prevClose2>0?Math.round(Math.abs((closes[closes.length-1]-prevClose2)/prevClose2*10000))/100:0;
+    const hasLargeGap=lastBarGapPct>=3.0;
     const setupWarning=(setup==='Trend Following'&&w52Pct<35)?`Precio en zona baja del año (${w52Pct}%) — EMA alcista pero tendencia de fondo cuestionable`:null;
-    return{t:ticker,n:NAMES[ticker]||ticker,price,changePct,rsi,volRatio,setup,score,strength,stopLoss,target,rr,recentHigh20,recentHigh126,realRR20,realRR126,earningDate:earn.date,earningDays:earn.days,earningBlocked:earn.blocked,earningCaution:earn.caution,earningPast:earn.past,barSource,w52Low,w52High,w52Pct,w52Val,ema20,ema50,atr,isManual,setupWarning};
+    return{t:ticker,n:NAMES[ticker]||ticker,price,changePct,rsi,volRatio,setup,score,strength,stopLoss,target,rr,recentHigh20,recentHigh126,realRR20,realRR126,earningDate:earn.date,earningDays:earn.days,earningBlocked:earn.blocked,earningCaution:earn.caution,earningPast:earn.past,barSource,priceDate,tradingDaysOld,isStale,lastBarGapPct,hasLargeGap,w52Low,w52High,w52Pct,w52Val,ema20,ema50,atr,isManual,setupWarning};
   }catch(e){return null}
 }
 
@@ -1107,6 +1135,15 @@ function renderResults(){
     html+=`<div class="section-divider" style="background:#1a0505;border-color:#4a1a1a;color:#f87171">🚫 Earnings próximos — No entrar (${blocked.length})</div>`;
     blocked.forEach(r=>{html+=buildCard(r,filtered.indexOf(r),0)});
   }
+  // Freshness banner: warn if any result has data >= 2 trading days old
+  const cachedRes=filtered.filter(r=>r.priceDate);
+  if(cachedRes.length>0){
+    const maxOld=Math.max(...cachedRes.map(r=>r.tradingDaysOld||0));
+    if(maxOld>=2){
+      const oldestDate=cachedRes.reduce((a,b)=>a.priceDate<b.priceDate?a:b).priceDate;
+      html=`<div style="background:#1a0800;border:1px solid #fb923c55;border-radius:6px;padding:8px 14px;margin-bottom:10px;font-size:12px;color:#fb923c">⚠ Datos desactualizados — hasta ${maxOld} días hábiles de retraso (más antiguo: cierre del ${fmtShortDate(oldestDate)}). Verificar precios contra IBKR antes de operar.</div>`+html;
+    }
+  }
   document.getElementById('results-container').innerHTML=html;
 }
 
@@ -1181,12 +1218,12 @@ function buildCard(r,i,rank){
       ${criteriaHtml}
       <span class="setup-badge ${getSetupClass(r.setup)}" style="margin-top:4px">${r.setup}</span>
     </div>
-    <div class="price">$${r.price.toFixed(2)}</div>
+    <div class="price">$${r.price.toFixed(2)}${r.priceDate?`<div style="font-size:9px;color:${staleDateColor(r.tradingDaysOld)};margin-top:1px;font-weight:normal">${r.isStale?'⚠ ':''}cierre ${fmtShortDate(r.priceDate)}</div>`:''}</div>
     <div class="${r.changePct>=0?'change-pos':'change-neg'}">${r.changePct>=0?'+':''}${r.changePct.toFixed(2)}%</div>
     <div><div class="rsi-val">${r.rsi}</div><div class="rsi-bar"><div class="rsi-fill" style="width:${r.rsi}%;background:${rsiColor}"></div></div></div>
     <div class="ema-info"><span style="color:${ema20color}">E20 $${r.ema20?r.ema20.toFixed(1):'—'}</span><br><span style="color:${ema50color}">E50 $${r.ema50?r.ema50.toFixed(1):'—'}</span></div>
     <div style="font-size:13px;color:#ccc">${r.volRatio.toFixed(1)}x</div>
-    <div class="target-info">$${r.price.toFixed(2)} → <span class="target-price">$${r.target.toFixed(2)}</span><br><span class="stop-price">ATR Stop $${r.stopLoss.toFixed(2)}</span> · R/R ${r.rr}:1${r.realRR20!==null?`<br><span style="font-size:10px;color:${r.realRR20<1.5?'#f87171':'#888'}">R/R real 20d: ${r.realRR20}:1${r.realRR20<1.5?' ⚠':''}</span>`:''}${r.earningBlocked?`<br><span style="font-size:10px;color:#f87171">🚫 Earnings ${r.earningDays===0?'HOY':r.earningDays===1?'mañana':`en ${r.earningDays}d`}</span>`:r.earningCaution?`<br><span style="font-size:10px;color:#fb923c">⚠ Earnings en ${r.earningDays}d</span>`:''}</div>
+    <div class="target-info">$${r.price.toFixed(2)} → <span class="target-price">$${r.target.toFixed(2)}</span><br><span class="stop-price">ATR Stop $${r.stopLoss.toFixed(2)}</span> · R/R ${r.rr}:1${r.realRR20!==null?`<br><span style="font-size:10px;color:${r.realRR20<1.5?'#f87171':'#888'}">R/R real 20d: ${r.realRR20}:1${r.realRR20<1.5?' ⚠':''}</span>`:''}${r.earningBlocked?`<br><span style="font-size:10px;color:#f87171">🚫 Earnings ${r.earningDays===0?'HOY':r.earningDays===1?'mañana':`en ${r.earningDays}d`}</span>`:r.earningCaution?`<br><span style="font-size:10px;color:#fb923c">⚠ Earnings en ${r.earningDays}d</span>`:''}${r.hasLargeGap?`<br><span style="font-size:10px;color:#fb923c">⚠ Gap ${r.lastBarGapPct}% último cierre</span>`:''}</div>
     <div>${render52W(r)}</div>
     <div><span class="${scoreClass}">${r.score}</span>${r.regimeBonus?`<div style="font-size:10px;color:#4ade80;margin-top:2px">+${r.regimeBonus} régimen</div>`:''}
     <button class="save-btn" onclick="event.stopPropagation();saveIdx(${i})">Guardar</button></div>
@@ -1210,7 +1247,7 @@ function buildCard(r,i,rank){
       <div><div class="detail-label">R/R real 20d</div><div class="detail-value ${r.realRR20!==null&&r.realRR20<1.5?'red':r.realRR20>=1.5?'green':''}">${r.realRR20!==null?r.realRR20+':1 (máx $'+r.recentHigh20+')':`—`}${r.realRR20!==null&&r.realRR20<1.5?' ⚠ resistencia cerca':''}</div></div>
       <div><div class="detail-label">R/R real 6m</div><div class="detail-value ${r.realRR126!==null&&r.realRR126<1.5?'red':r.realRR126>=1.5?'green':''}">${r.realRR126!==null?r.realRR126+':1 (máx $'+r.recentHigh126+')':'—'}</div></div>
       <div><div class="detail-label">Vol ratio</div><div class="detail-value">${r.volRatio.toFixed(1)}x <span style="font-size:11px;color:#555">(día anterior vs mediana 20d)</span></div></div>
-      <div><div class="detail-label">Datos</div><div class="detail-value" style="color:#555">${r.barSource||'—'}</div></div>
+      <div><div class="detail-label">Datos</div><div class="detail-value" style="color:${r.isStale?'#fb923c':r.priceDate?'#888':'#4ade80'}">${r.barSource||'—'}${r.isStale?` <span style="background:#fb923c22;border:1px solid #fb923c55;border-radius:3px;padding:1px 5px;font-size:10px">STALE</span>`:''}${r.hasLargeGap?` <span style="background:#fb923c22;border:1px solid #fb923c55;border-radius:3px;padding:1px 5px;font-size:10px">gap ${r.lastBarGapPct}%</span>`:''}</div></div>
       <div><div class="detail-label">Posición 52W</div><div class="detail-value ${r.w52Val==='cheap'?'green':r.w52Val==='mid'?'amber':'red'}">${r.w52Pct}% — ${r.w52Val==='cheap'?'Barato':r.w52Val==='mid'?'Zona media':'Caro'}</div></div>
     </div>
     ${r.setup==='Trend Following'?`<div style="background:#0d0d0d;border:1px solid #222;border-radius:8px;padding:10px;margin-top:8px"><div style="font-size:10px;color:#444;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Desglose score</div><div style="font-size:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center"><span style="color:#555">40 base</span>${_rsiPts>0?`<span style="color:#4ade80">+${_rsiPts} RSI</span>`:''}<span style="color:${_volPts>0?'#4ade80':'#444'}">+${_volPts} vol (${r.volRatio.toFixed(1)}x)</span><span style="color:${_emaPts>0?'#4ade80':'#444'}">+${_emaPts} EMAs (${_emaSepPct!==null?_emaSepPct+'%':'—'})</span><span style="color:${_rangePts>0?'#4ade80':'#444'}">+${_rangePts} rango (${r.w52Pct}%)</span>${_regimePts>0?`<span style="color:#60a5fa">+${_regimePts} régimen</span>`:''}<span style="color:#fff;font-weight:600">= ${r.score}/95</span></div></div>`:''}
