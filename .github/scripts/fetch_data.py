@@ -1,7 +1,7 @@
 import yfinance as yf
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 TICKERS = [
     # Mega-cap tech
@@ -33,7 +33,11 @@ TICKERS = [
 ]
 
 os.makedirs('data', exist_ok=True)
-today = datetime.utcnow().strftime('%Y-%m-%d')
+now_utc = datetime.utcnow()
+today = now_utc.strftime('%Y-%m-%d')
+
+# Most recent expected trading day: today if after 22:00 UTC (market close + buffer), else yesterday
+expected_trading_day = today if now_utc.hour >= 22 else (now_utc - timedelta(days=1)).strftime('%Y-%m-%d')
 
 print(f"Descargando {len(TICKERS)} tickers con yfinance...")
 
@@ -50,6 +54,7 @@ raw = yf.download(
 
 success = 0
 failed = []
+data_dates = {}  # {ticker: last_bar_date}
 
 for ticker in TICKERS:
     try:
@@ -77,10 +82,17 @@ for ticker in TICKERS:
             'dates':   [d.strftime('%Y-%m-%d') for d in df.index],
         }
 
+        last_date = out['dates'][-1]
+        data_dates[ticker] = last_date
+
+        # Warn if last bar is stale (more than 5 calendar days before expected)
+        days_diff = (datetime.strptime(expected_trading_day, '%Y-%m-%d') - datetime.strptime(last_date, '%Y-%m-%d')).days
+        stale_flag = ' ⚠ STALE' if days_diff > 5 else ''
+
         with open(f"data/{ticker}.json", 'w') as f:
             json.dump(out, f, separators=(',', ':'))
 
-        print(f"  {ticker} ({len(out['closes'])} bars)")
+        print(f"  {ticker} ({len(out['closes'])} bars, last={last_date}){stale_flag}")
         success += 1
 
     except Exception as e:
@@ -92,3 +104,31 @@ if failed:
     print(f"  |  failed: {', '.join(failed)}")
 else:
     print()
+
+# Identify stale tickers (last bar older than expected by more than 1 business day)
+stale = []
+for t, d in data_dates.items():
+    try:
+        delta = (datetime.strptime(expected_trading_day, '%Y-%m-%d') - datetime.strptime(d, '%Y-%m-%d')).days
+        if delta > 3:  # > 3 calendar days is suspicious
+            stale.append({'t': t, 'last_date': d, 'days': delta})
+    except:
+        pass
+
+if stale:
+    print(f"\n⚠ {len(stale)} tickers with stale data:")
+    for s in stale:
+        print(f"  {s['t']}: last={s['last_date']} ({s['days']} days behind {expected_trading_day})")
+
+# Write manifest so scanner can display freshness info
+manifest = {
+    'run_date': today,
+    'run_time': now_utc.strftime('%H:%M:%S'),
+    'expected_trading_day': expected_trading_day,
+    'tickers_ok': success,
+    'tickers_failed': failed,
+    'stale_tickers': stale,
+}
+with open('data/manifest.json', 'w') as f:
+    json.dump(manifest, f, separators=(',', ':'))
+print(f"Manifest: {len(stale)} stale, {len(failed)} failed")
