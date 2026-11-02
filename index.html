@@ -415,6 +415,17 @@ async function fetchFromCache(ticker){
   }catch(e){return null}
 }
 
+// Live price from direct Yahoo (no proxy — works when Yahoo sends CORS headers).
+// Best-effort: returns null on CORS block or timeout; fallback to cached.
+async function fetchLivePrice(ticker){
+  try{
+    const r=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5d`,{signal:AbortSignal.timeout(3000)});
+    if(!r.ok)return null;
+    const d=await r.json();
+    return d?.chart?.result?.[0]?.meta?.regularMarketPrice||null;
+  }catch(e){return null;}
+}
+
 async function fetchYahoo(ticker){
   // Try static cache first (populated daily by GitHub Actions — no CORS issues)
   const cached=await fetchFromCache(ticker);
@@ -611,14 +622,19 @@ function sLerp(v,pts){
 }
 
 // ── SETUP DETECTION (Triple Confirmation) ─────────────────────────
-function detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50){
+// isCached=true → data ends at D-1 close (all bars complete); last bar IS D-1
+// isCached=false → data may include today's partial intraday bar; D-1 is [-2]
+function detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50,isCached=false){
   if(closes.length<51||!ema20||!ema50)return{setup:'None',score:0,strength:'low',volRatio:1,atrStop:null};
   const price=closes[closes.length-1];
   const prevPrice=closes[closes.length-2];
   const prevEma20=calcEMA(closes.slice(0,-1),20);
-  // P3: baseline excludes last bar (may be partial intraday); compare against prev complete day
+  // Volume baseline: median of 20 complete bars (D-21..D-2), compare vs last complete bar
+  // For cached data: last bar is D-1 complete → use [-1]
+  // For live data: last bar is today partial → use [-2] for D-1 complete
+  const n=volumes.length;
   const avgVol=medVol(volumes.slice(-21,-1));
-  const lastCompleteVol=volumes[volumes.length-2]||volumes[volumes.length-1]||0;
+  const lastCompleteVol=isCached?(volumes[n-1]||0):(volumes[n-2]||volumes[n-1]||0);
   const volRatio=avgVol>0?Math.round(lastCompleteVol/avgVol*10)/10:1.0;
   const atr=calcATR(highs,lows,closes,14);
   const rawAtrStop=atr?price-2*atr:null;
@@ -710,7 +726,7 @@ function detectExitSignal(closes,highs,lows,volumes,position){
   const atr=calcATR(highs,lows,closes,14);
   const atrStop=atr?Math.round((price-2*atr)*100)/100:null;
   const avgVol=medVol(volumes.slice(-21,-1));
-  const lastCompleteVol=volumes[volumes.length-2]||volumes[volumes.length-1]||0;
+  const lastCompleteVol=volumes[volumes.length-1]||0; // portfolio: data is always cached
   const volRatio=avgVol>0?lastCompleteVol/avgVol:1;
   const macd=calcMACD(closes);
   const distFromEma20=ema20?Math.round((price/ema20-1)*100*10)/10:0;
@@ -762,7 +778,8 @@ async function processStock(ticker,isManual=false){
     const rsi=calcRSI(closes);
     const ema20=calcEMA(closes,20);
     const ema50=calcEMA(closes,50);
-    const {setup,score,strength,volRatio,atrStop,atr}=detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50);
+    const isCached=!!result._cached;
+    const {setup,score,strength,volRatio,atrStop,atr}=detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50,isCached);
     const stopLoss=atrStop||Math.round(price*(setup==='Breakout'?0.95:0.93)*100)/100;
     const target=Math.round(price*(setup==='Trend Following'?1.12:setup==='Breakout'?1.15:setup==='Pullback EMA'?1.10:1.09)*100)/100;
     const rr=stopLoss<price?Math.round((target-price)/(price-stopLoss)*10)/10:0;
@@ -783,8 +800,20 @@ async function processStock(ticker,isManual=false){
     const prevClose2=closes.length>=2?closes[closes.length-2]:0;
     const lastBarGapPct=prevClose2>0?Math.round(Math.abs((closes[closes.length-1]-prevClose2)/prevClose2*10000))/100:0;
     const hasLargeGap=lastBarGapPct>=3.0;
+    // P0: attempt live price (direct Yahoo — CORS optional, graceful fallback)
+    let livePrice=null,priceIsLive=false,liveChangePct=null;
+    if(isCached){
+      const raw=await fetchLivePrice(ticker);
+      if(raw&&raw>0){livePrice=Math.round(raw*100)/100;priceIsLive=true;liveChangePct=Math.round((livePrice-price)/price*10000)/100;}
+    }
+    const stopBroken=priceIsLive?(livePrice<=stopLoss):false;
+    // P3: EMA stack and RSI band flags
+    const emaStackOk=!!(ema20&&ema50&&ema20>ema50);
+    const rsiAboveBand=rsi>70;
+    const ema20prev6=closes.length>26?calcEMA(closes.slice(0,-6),20):null;
+    const ema20slope6=ema20&&ema20prev6?Math.round((ema20/ema20prev6-1)*1000)/10:null;
     const setupWarning=(setup==='Trend Following'&&w52Pct<35)?`Precio en zona baja del año (${w52Pct}%) — EMA alcista pero tendencia de fondo cuestionable`:null;
-    return{t:ticker,n:NAMES[ticker]||ticker,price,changePct,rsi,volRatio,setup,score,strength,stopLoss,target,rr,recentHigh20,recentHigh126,realRR20,realRR126,earningDate:earn.date,earningDays:earn.days,earningBlocked:earn.blocked,earningCaution:earn.caution,earningPast:earn.past,barSource,priceDate,tradingDaysOld,isStale,lastBarGapPct,hasLargeGap,w52Low,w52High,w52Pct,w52Val,ema20,ema50,atr,isManual,setupWarning};
+    return{t:ticker,n:NAMES[ticker]||ticker,price,changePct,rsi,volRatio,setup,score,strength,stopLoss,target,rr,recentHigh20,recentHigh126,realRR20,realRR126,earningDate:earn.date,earningDays:earn.days,earningBlocked:earn.blocked,earningCaution:earn.caution,earningPast:earn.past,barSource,priceDate,tradingDaysOld,isStale,lastBarGapPct,hasLargeGap,livePrice,priceIsLive,liveChangePct,stopBroken,emaStackOk,rsiAboveBand,ema20slope6,w52Low,w52High,w52Pct,w52Val,ema20,ema50,atr,isManual,setupWarning};
   }catch(e){return null}
 }
 
@@ -1113,8 +1142,10 @@ function renderResults(){
   window._fr=filtered;
   if(filtered.length===0){document.getElementById('results-container').innerHTML='<div class="empty-state"><div>No hay resultados para ese filtro</div></div>';return}
   // P1: separate earnings-blocked from actionable
+  // P0: stop-broken tickers (live price ≤ ATR stop) get their own section
   const blocked=filtered.filter(r=>r.earningBlocked);
-  const actionable=filtered.filter(r=>!r.earningBlocked);
+  const broken=filtered.filter(r=>!r.earningBlocked&&r.stopBroken);
+  const actionable=filtered.filter(r=>!r.earningBlocked&&!r.stopBroken);
   const tier1=actionable.filter(r=>r._tier.tier===1);
   const tier2=actionable.filter(r=>r._tier.tier===2);
   const tier3=actionable.filter(r=>r._tier.tier===3);
@@ -1130,6 +1161,10 @@ function renderResults(){
   if(tier3.length>0){
     html+=`<div class="section-divider div-tier-3">◎ En Seguimiento — Sin señal activa (${tier3.length})</div>`;
     tier3.forEach((r,rank)=>{html+=buildCard(r,filtered.indexOf(r),rank+1)});
+  }
+  if(broken.length>0){
+    html+=`<div class="section-divider" style="background:#1a0000;border-color:#4a0000;color:#f87171">🛑 Stop roto — precio vivo bajo el stop (${broken.length})</div>`;
+    broken.forEach(r=>{html+=buildCard(r,filtered.indexOf(r),0)});
   }
   if(blocked.length>0){
     html+=`<div class="section-divider" style="background:#1a0505;border-color:#4a1a1a;color:#f87171">🚫 Earnings próximos — No entrar (${blocked.length})</div>`;
@@ -1217,9 +1252,12 @@ function buildCard(r,i,rank){
       ${tierBadgeHtml}
       ${criteriaHtml}
       <span class="setup-badge ${getSetupClass(r.setup)}" style="margin-top:4px">${r.setup}</span>
+      ${r.stopBroken?`<div style="background:#2a0000;border:1px solid #f87171;border-radius:4px;padding:2px 7px;font-size:11px;color:#f87171;font-weight:600;display:inline-block;margin-top:4px">🛑 STOP ROTO $${r.livePrice?.toFixed(2)}</div>`:''}
+      ${!r.emaStackOk&&r.setup==='Trend Following'?`<div style="font-size:10px;color:#fb923c;margin-top:2px">⚠ EMA20 &lt; EMA50</div>`:''}
+      ${r.rsiAboveBand?`<div style="font-size:10px;color:#fb923c;margin-top:1px">⚠ RSI ${r.rsi} — sobre 70</div>`:''}
     </div>
-    <div class="price">$${r.price.toFixed(2)}${r.priceDate?`<div style="font-size:9px;color:${staleDateColor(r.tradingDaysOld)};margin-top:1px;font-weight:normal">${r.isStale?'⚠ ':''}cierre ${fmtShortDate(r.priceDate)}</div>`:''}</div>
-    <div class="${r.changePct>=0?'change-pos':'change-neg'}">${r.changePct>=0?'+':''}${r.changePct.toFixed(2)}%</div>
+    <div class="price">${r.priceIsLive?`$${r.livePrice.toFixed(2)}<div style="font-size:9px;color:#555;margin-top:1px;font-weight:normal">D-1 $${r.price.toFixed(2)}</div>`:`$${r.price.toFixed(2)}${r.priceDate?`<div style="font-size:9px;color:${staleDateColor(r.tradingDaysOld)};margin-top:1px;font-weight:normal">${r.isStale?'⚠ ':''}cierre ${fmtShortDate(r.priceDate)}</div>`:''}`}</div>
+    <div class="${(r.priceIsLive?r.liveChangePct:r.changePct)>=0?'change-pos':'change-neg'}">${r.priceIsLive?'hoy: ':''}${(r.priceIsLive?r.liveChangePct:r.changePct)>=0?'+':''}${(r.priceIsLive?r.liveChangePct:r.changePct).toFixed(2)}%</div>
     <div><div class="rsi-val">${r.rsi}</div><div class="rsi-bar"><div class="rsi-fill" style="width:${r.rsi}%;background:${rsiColor}"></div></div></div>
     <div class="ema-info"><span style="color:${ema20color}">E20 $${r.ema20?r.ema20.toFixed(1):'—'}</span><br><span style="color:${ema50color}">E50 $${r.ema50?r.ema50.toFixed(1):'—'}</span></div>
     <div style="font-size:13px;color:#ccc">${r.volRatio.toFixed(1)}x</div>
@@ -1238,8 +1276,8 @@ function buildCard(r,i,rank){
       <div><div class="detail-label">Fuerza</div><div class="detail-value ${r.strength==='high'?'green':''}">${r.strength==='high'?'Alta ★':r.strength==='medium'?'Media':'Baja'}</div></div>
       <div><div class="detail-label">Precio</div><div class="detail-value">$${r.price.toFixed(2)}</div></div>
       <div><div class="detail-label">RSI (14)</div><div class="detail-value">${r.rsi} ${r.rsi<35?'↓ Sobrevendido':r.rsi>70?'↑ Sobrecomprado':'— Neutro'}</div></div>
-      <div><div class="detail-label">EMA20</div><div class="detail-value ${r.ema20&&r.price>r.ema20?'green':'red'}">${r.ema20?`$${r.ema20.toFixed(1)}`:'—'}</div></div>
-      <div><div class="detail-label">EMA50</div><div class="detail-value ${r.ema50&&r.price>r.ema50?'green':'red'}">${r.ema50?`$${r.ema50.toFixed(1)}`:'—'}</div></div>
+      <div><div class="detail-label">EMA20</div><div class="detail-value ${r.ema20&&r.price>r.ema20?'green':'red'}">${r.ema20?`$${r.ema20.toFixed(1)}`:'—'}${r.ema20slope6!==null?` <span style="font-size:10px;color:${r.ema20slope6>0?'#4ade80':'#f87171'}">slope ${r.ema20slope6>0?'+':''}${r.ema20slope6}%/6d</span>`:''}</div></div>
+      <div><div class="detail-label">EMA50</div><div class="detail-value ${r.ema50&&r.price>r.ema50?'green':'red'}">${r.ema50?`$${r.ema50.toFixed(1)}`:'—'} <span style="font-size:10px;color:${r.emaStackOk?'#4ade80':'#fb923c'}">${r.emaStackOk?'pila ✓':'pila ✗ EMA20<EMA50'}</span></div></div>
       <div><div class="detail-label">ATR (14)</div><div class="detail-value">${r.atr?`$${r.atr.toFixed(2)}`:'—'}</div></div>
       <div><div class="detail-label">ATR Stop (2x)</div><div class="detail-value red">${r.stopLoss?`$${r.stopLoss.toFixed(2)}`:'—'}</div></div>
       <div><div class="detail-label">Target (+${Math.round((r.target/r.price-1)*100)}%)</div><div class="detail-value green">$${r.target.toFixed(2)}</div></div>
