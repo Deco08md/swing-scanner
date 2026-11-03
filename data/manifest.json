@@ -1,1 +1,1 @@
-{"run_date":"2026-10-31","run_time":"01:25:50","expected_trading_day":"2026-10-30","tickers_ok":145,"tickers_failed":["BK"],"stale_tickers":[]}
+{"run_date":"2026-11-03","run_time":"03:18:52","expected_trading_day":"2026-11-02","tickers_ok":144,"tickers_failed":["BK","CME"],"stale_tickers":[]}
