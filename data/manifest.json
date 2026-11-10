@@ -1,1 +1,1 @@
-{"run_date":"2026-11-07","run_time":"01:38:12","expected_trading_day":"2026-11-06","tickers_ok":145,"tickers_failed":["BK"],"stale_tickers":[]}
+{"run_date":"2026-11-10","run_time":"03:57:50","expected_trading_day":"2026-11-09","tickers_ok":144,"tickers_failed":["BK","PSX"],"stale_tickers":[]}
