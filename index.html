@@ -271,7 +271,7 @@
     </div>
     <div class="error-box" id="error-box"></div>
     <div id="results-container">
-      <div class="empty-state"><div style="font-size:36px;margin-bottom:16px">◎</div><div>Ejecuta el scan para detectar oportunidades con Triple Confirmation</div><div style="font-size:12px;color:#333;margin-top:8px">EMA20/50 · RSI 45–70 · Volumen institucional · ATR stop dinámico</div></div>
+      <div class="empty-state"><div style="font-size:36px;margin-bottom:16px">◎</div><div>Ejecuta el scan para detectar oportunidades con Triple Confirmation</div><div style="font-size:12px;color:#333;margin-top:8px">EMA20/50 · RSI 55–70 · Volumen vs media 20d · ATR stop · banderas de frescura, earnings y R/R</div></div>
     </div>
 
     <div class="history-section">
@@ -299,6 +299,7 @@
   </div>
 </div>
 
+<script src="scanner-core.js"></script>
 <script>
 // ── CONFIG ─────────────────────────────────────────────────────────
 const PORTFOLIO = [
@@ -392,13 +393,14 @@ const PROXIES=[
 let allResults=[],savedHistory=JSON.parse(localStorage.getItem('swing_v5_history')||'[]');
 let manualTickers=JSON.parse(localStorage.getItem('manual_tickers_v5')||'[]');
 let filters={setup:'all',str:'all',val:'all',src:'all'};
-let earningsData={};
-const EARNINGS_BLOCK_DAYS=7;
+let earningsData={},holdings={},pipelineManifest=null,showStale=false;
+const CORE=ScannerCore,PARAMS=CORE.DEFAULT_PARAMS;
+const {calcEMA,calcRSI,calcATR}=CORE;
 
 // ── FETCH ──────────────────────────────────────────────────────────
 async function fetchFromCache(ticker){
   try{
-    const resp=await fetch(`./data/${ticker}.json`,{signal:AbortSignal.timeout(5000)});
+    const resp=await fetch(`./data/${ticker}.json`,{cache:'no-cache',signal:AbortSignal.timeout(5000)});
     if(!resp.ok)return null;
     const d=await resp.json();
     if(!d.closes||d.closes.length<52)return null;
@@ -410,19 +412,20 @@ async function fetchFromCache(ticker){
       timestamp:d.dates.map(dt=>new Date(dt+'T00:00:00Z').getTime()/1000),
       indicators:{quote:[{close:d.closes,high:d.highs,low:d.lows,volume:d.volumes,open:d.closes}]},
       _cached:d.updated,
-      _cachedDate:d.dates[d.dates.length-1]
+      _cachedDate:d.dates[d.dates.length-1],
+      _dates:d.dates
     };
   }catch(e){return null}
 }
 
-// Live price from direct Yahoo (no proxy — works when Yahoo sends CORS headers).
-// Best-effort: returns null on CORS block or timeout; fallback to cached.
+// Live quote from direct Yahoo (no proxy). Usually blocked by CORS in the browser → null.
 async function fetchLivePrice(ticker){
   try{
     const r=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5d`,{signal:AbortSignal.timeout(3000)});
     if(!r.ok)return null;
-    const d=await r.json();
-    return d?.chart?.result?.[0]?.meta?.regularMarketPrice||null;
+    const m=(await r.json())?.chart?.result?.[0]?.meta;
+    if(!m?.regularMarketPrice||!m.regularMarketTime)return null;
+    return{price:m.regularMarketPrice,date:CORE.nyDate(new Date(m.regularMarketTime*1000))};
   }catch(e){return null;}
 }
 
@@ -504,25 +507,21 @@ async function fetchStooq(ticker){
 }
 
 // ── EARNINGS ──────────────────────────────────────────────────────
-async function loadEarnings(){
-  try{
-    const r=await fetch('./earnings.json',{signal:AbortSignal.timeout(4000)});
-    if(r.ok)earningsData=await r.json();
-  }catch(e){}
+async function getJSON(url){
+  try{const r=await fetch(url,{cache:'no-cache',signal:AbortSignal.timeout(5000)});return r.ok?await r.json():null;}catch(e){return null;}
 }
+// Auto calendar from the pipeline (data/earnings_auto.json) + manual earnings.json (manual wins)
+async function loadEarnings(){
+  const [auto,manual]=await Promise.all([getJSON('./data/earnings_auto.json'),getJSON('./earnings.json')]);
+  earningsData=CORE.mergeEarnings(auto||{},manual||{},CORE.nyDate());
+}
+async function loadPortfolio(){holdings=CORE.holdingsMap(await getJSON('./portfolio.json'));}
+async function loadManifest(){pipelineManifest=await getJSON('./data/manifest.json');}
 function earningsInfo(ticker){
-  const dateStr=earningsData[ticker]||null;
-  if(!dateStr)return{date:null,days:null,blocked:false,caution:false};
-  const today=new Date(new Date().toISOString().slice(0,10)+'T00:00:00Z');
-  const earnDay=new Date(dateStr+'T00:00:00Z');
-  const days=Math.round((earnDay-today)/86400000);
-  return{
-    date:dateStr,
-    days,
-    blocked:days>=0&&days<=EARNINGS_BLOCK_DAYS,
-    caution:days>EARNINGS_BLOCK_DAYS&&days<=14,
-    past:days<0
-  };
+  const e=earningsData[ticker]||{};
+  const days=e.next?CORE.daysTo(e.next,CORE.nyDate()):null;
+  return{date:e.next||null,last:e.last||null,time:e.nextTime||null,src:e.src||null,days,
+    blocked:days!==null&&days>=0&&days<=PARAMS.earningsDays,caution:days!==null&&days>PARAMS.earningsDays&&days<=14,past:false};
 }
 // P5 — RSI regression test (run in console: rsiSelfTest())
 // Fix committed in 905d73b: Cutler simple avg → Wilder smoothed (standard IBKR/TradingView)
@@ -538,59 +537,14 @@ function rsiSelfTest(){
   console.log('RSI self-test passed. Sample RSI:',rsi);
 }
 
-// ── DATE / FRESHNESS HELPERS ──────────────────────────────────────
-function calcTradingDaysOld(dateStr){
-  try{
-    const data=new Date(dateStr+'T00:00:00Z');
-    const now=new Date();
-    const today=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));
-    if(data>=today)return 0;
-    let count=0,d=new Date(data);
-    while(d<today){d.setUTCDate(d.getUTCDate()+1);const dow=d.getUTCDay();if(dow!==0&&dow!==6)count++;}
-    return count;
-  }catch(e){return 0;}
-}
+// ── DATE HELPERS (indicators live in scanner-core.js) ─────────────
 function fmtShortDate(iso){
   if(!iso)return'';
   const months=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
   const[,m,d]=iso.split('-');
   return`${parseInt(d)}-${months[parseInt(m)-1]}`;
 }
-function staleDateColor(days){return days<=1?'#666':days===2?'#fb923c':'#f87171';}
-
-// ── INDICATORS ────────────────────────────────────────────────────
-function calcEMA(closes,period){
-  if(closes.length<period)return null;
-  const k=2/(period+1);
-  let ema=closes.slice(0,period).reduce((a,b)=>a+b,0)/period;
-  for(let i=period;i<closes.length;i++)ema=closes[i]*k+ema*(1-k);
-  return Math.round(ema*100)/100;
-}
-
-function calcRSI(closes,period=14){
-  // Wilder's smoothed RSI (standard: IBKR, TradingView). Needs ~100+ bars to converge.
-  if(closes.length<period+2)return 50;
-  let ag=0,al=0;
-  for(let i=1;i<=period;i++){const d=closes[i]-closes[i-1];if(d>0)ag+=d;else al-=d;}
-  ag/=period;al/=period;
-  for(let i=period+1;i<closes.length;i++){
-    const d=closes[i]-closes[i-1];
-    ag=(ag*(period-1)+(d>0?d:0))/period;
-    al=(al*(period-1)+(d<0?-d:0))/period;
-  }
-  if(al===0)return 100;
-  return Math.round(100-100/(1+ag/al));
-}
-
-function calcATR(highs,lows,closes,period=14){
-  if(closes.length<period+1)return null;
-  const trs=[];
-  for(let i=1;i<closes.length;i++){
-    const h=highs[i]||closes[i]*1.01,l=lows[i]||closes[i]*0.99,pc=closes[i-1];
-    trs.push(Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc)));
-  }
-  return Math.round(trs.slice(-period).reduce((a,b)=>a+b,0)/period*100)/100;
-}
+function staleDateColor(sessions){return sessions<=0?'#666':sessions===1?'#fb923c':'#f87171';}
 
 function calcMACD(closes){
   if(closes.length<35)return{macd:0,signal:0,hist:0};
@@ -607,9 +561,6 @@ function calcMACD(closes){
   return{macd:Math.round(macdLine*100)/100,signal:Math.round(signalLine*100)/100,hist:Math.round((macdLine-signalLine)*100)/100};
 }
 
-// ── VOLUME BASELINE (median of last 20 days, robust to expiry spikes) ──
-function medVol(arr){const s=[...arr].sort((a,b)=>a-b);return s[Math.floor(s.length/2)]||0;}
-
 // ── LINEAR INTERPOLATION SCORER ────────────────────────────────────
 // pts = [[x0,y0],[x1,y1],...] sorted ascending; returns interpolated y
 function sLerp(v,pts){
@@ -622,20 +573,14 @@ function sLerp(v,pts){
 }
 
 // ── SETUP DETECTION (Triple Confirmation) ─────────────────────────
-// isCached=true → data ends at D-1 close (all bars complete); last bar IS D-1
-// isCached=false → data may include today's partial intraday bar; D-1 is [-2]
-function detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50,isCached=false){
+// lastIsComplete=false when the series ends with a live/partial bar (its volume is ignored)
+function detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50,lastIsComplete=true){
   if(closes.length<51||!ema20||!ema50)return{setup:'None',score:0,strength:'low',volRatio:1,atrStop:null};
   const price=closes[closes.length-1];
   const prevPrice=closes[closes.length-2];
   const prevEma20=calcEMA(closes.slice(0,-1),20);
-  // Volume baseline: median of 20 complete bars (D-21..D-2), compare vs last complete bar
-  // For cached data: last bar is D-1 complete → use [-1]
-  // For live data: last bar is today partial → use [-2] for D-1 complete
-  const n=volumes.length;
-  const avgVol=medVol(volumes.slice(-21,-1));
-  const lastCompleteVol=isCached?(volumes[n-1]||0):(volumes[n-2]||volumes[n-1]||0);
-  const volRatio=avgVol>0?Math.round(lastCompleteVol/avgVol*10)/10:1.0;
+  // P4: last complete day / mean of the 20 sessions before it
+  const volRatio=CORE.volumeRatio(volumes,lastIsComplete);
   const atr=calcATR(highs,lows,closes,14);
   const rawAtrStop=atr?price-2*atr:null;
   const atrStop=rawAtrStop&&rawAtrStop>0?Math.round(rawAtrStop*100)/100:null;
@@ -725,9 +670,7 @@ function detectExitSignal(closes,highs,lows,volumes,position){
   const rsi=calcRSI(closes);
   const atr=calcATR(highs,lows,closes,14);
   const atrStop=atr?Math.round((price-2*atr)*100)/100:null;
-  const avgVol=medVol(volumes.slice(-21,-1));
-  const lastCompleteVol=volumes[volumes.length-1]||0; // portfolio: data is always cached
-  const volRatio=avgVol>0?lastCompleteVol/avgVol:1;
+  const volRatio=CORE.volumeRatio(volumes,true);
   const macd=calcMACD(closes);
   const distFromEma20=ema20?Math.round((price/ema20-1)*100*10)/10:0;
   const stopBuffer=position.stop?Math.round((price/position.stop-1)*100*10)/10:null;
@@ -755,66 +698,68 @@ function detectExitSignal(closes,highs,lows,volumes,position){
 }
 
 // ── PROCESS STOCK ──────────────────────────────────────────────────
-async function processStock(ticker,isManual=false){
+const r2=x=>Math.round(x*100)/100;
+const r1=x=>x==null?null:Math.round(x*10)/10;
+async function processStock(ticker,isManual=false,asOf=CORE.lastCompletedSession()){
   const result=await fetchYahoo(ticker);
   if(!result)return null;
   try{
-    const meta=result.meta,q=result.indicators?.quote?.[0],ts=result.timestamp||[];
-    // Align all arrays by valid close indices to prevent length mismatches
+    const q=result.indicators?.quote?.[0],ts=result.timestamp||[];
     const validIdx=ts.map((_,i)=>i).filter(i=>q?.close?.[i]!=null&&q?.close?.[i]>0);
     const closes=validIdx.map(i=>q.close[i]);
-    const highs=validIdx.map(i=>q.high?.[i]||closes[validIdx.indexOf(i)]*1.01);
-    const lows=validIdx.map(i=>q.low?.[i]||closes[validIdx.indexOf(i)]*0.99);
+    const highs=validIdx.map((i,k)=>q.high?.[i]||closes[k]*1.01);
+    const lows=validIdx.map((i,k)=>q.low?.[i]||closes[k]*0.99);
     const volumes=validIdx.map(i=>q.volume?.[i]||0);
-    if(closes.length<20)return null;
-    const price=Math.round((meta.regularMarketPrice||closes[closes.length-1])*100)/100;
-    const prev=meta.chartPreviousClose||meta.previousClose||closes[closes.length-2];
-    const changePct=prev?Math.round(((price-prev)/prev)*10000)/100:0;
-    const w52High=Math.round((meta.fiftyTwoWeekHigh||Math.max(...closes))*100)/100;
-    const w52Low=Math.round((meta.fiftyTwoWeekLow||Math.min(...closes))*100)/100;
-    const w52Range=w52High-w52Low;
-    const w52Pct=w52Range>0?Math.round((price-w52Low)/w52Range*100):50;
+    const dates=result._dates?validIdx.map(i=>result._dates[i]):validIdx.map(i=>CORE.nyDate(new Date(ts[i]*1000)));
+    let live=null;
+    // Non-cached sources can end with today's partial bar: treat it as the live price, not a complete bar
+    if(dates.length&&dates[dates.length-1]>asOf){live={price:closes.pop(),date:dates.pop()};highs.pop();lows.pop();volumes.pop();}
+    if(closes.length<52)return null;
+    const n=closes.length,barDate=dates[n-1],priceScanner=r2(closes[n-1]);
+    if(!live&&result._cached){const lq=await fetchLivePrice(ticker);if(lq&&lq.date>barDate)live=lq;}
+    const useLive=!!live,cur=useLive?r2(live.price):priceScanner;
+    // Stop as the scanner would have shown it on the last complete bar
+    const atrScanner=calcATR(highs,lows,closes);
+    const stopScanner=atrScanner?r2(priceScanner-2*atrScanner):null;
+    // P0: every indicator is computed on the same bar as the displayed price (live bar appended when available)
+    const C=useLive?[...closes,cur]:closes,H=useLive?[...highs,cur]:highs,L=useLive?[...lows,cur]:lows,V=useLive?[...volumes,0]:volumes;
+    const rsi=calcRSI(C),ema20=calcEMA(C,20),ema50=calcEMA(C,50);
+    const {setup,score,strength,volRatio,atrStop,atr}=detectSetup(C,H,L,V,rsi,ema20,ema50,!useLive);
+    const stopLoss=atrStop||r2(cur*(setup==='Breakout'?0.95:0.93));
+    const target=r2(cur*(setup==='Trend Following'?1.12:setup==='Breakout'?1.15:setup==='Pullback EMA'?1.10:1.09));
+    const rr=stopLoss<cur?r1((target-cur)/(cur-stopLoss)):0;
+    const recentHigh20=r2(Math.max(...closes.slice(-20)));
+    const recentHigh126=r2(Math.max(...closes.slice(-Math.min(126,n))));
+    const realRR20=r1(CORE.realRR(cur,stopLoss,recentHigh20));
+    const realRR126=r1(CORE.realRR(cur,stopLoss,recentHigh126));
+    const lastBarChgPct=(closes[n-1]/closes[n-2]-1)*100;
+    const changePct=useLive?r2((cur/priceScanner-1)*100):r2(lastBarChgPct);
+    const yr=closes.slice(-252);
+    const w52High=r2(Math.max(...yr,cur)),w52Low=r2(Math.min(...yr,cur));
+    const w52Pct=w52High>w52Low?Math.round((cur-w52Low)/(w52High-w52Low)*100):50;
     const w52Val=w52Pct<=35?'cheap':w52Pct<=70?'mid':'exp';
-    const rsi=calcRSI(closes);
-    const ema20=calcEMA(closes,20);
-    const ema50=calcEMA(closes,50);
-    const isCached=!!result._cached;
-    const {setup,score,strength,volRatio,atrStop,atr}=detectSetup(closes,highs,lows,volumes,rsi,ema20,ema50,isCached);
-    const stopLoss=atrStop||Math.round(price*(setup==='Breakout'?0.95:0.93)*100)/100;
-    const target=Math.round(price*(setup==='Trend Following'?1.12:setup==='Breakout'?1.15:setup==='Pullback EMA'?1.10:1.09)*100)/100;
-    const rr=stopLoss<price?Math.round((target-price)/(price-stopLoss)*10)/10:0;
-    // P2: real R/R usando máximos recientes como resistencia real
-    const risk=price-stopLoss;
-    const recentHigh20=Math.round(Math.max(...closes.slice(-20))*100)/100;
-    const recentHigh126=Math.round(Math.max(...closes.slice(-Math.min(126,closes.length)))*100)/100;
-    const realRR20=risk>0?Math.round(Math.max(0,recentHigh20-price)/risk*10)/10:null;
-    const realRR126=risk>0?Math.round(Math.max(0,recentHigh126-price)/risk*10)/10:null;
-    // P1: earnings filter
     const earn=earningsInfo(ticker);
-    // P4: bar source — use actual last-bar date, not workflow run date
-    const priceDate=result._cachedDate||null;
-    const barSource=priceDate?`cierre ${priceDate}`:(result._cached?`run ${result._cached}`:'en vivo');
-    const tradingDaysOld=priceDate?calcTradingDaysOld(priceDate):0;
-    const isStale=tradingDaysOld>=2;
-    // Gap detection: large move on last bar (possible earnings or corporate event)
-    const prevClose2=closes.length>=2?closes[closes.length-2]:0;
-    const lastBarGapPct=prevClose2>0?Math.round(Math.abs((closes[closes.length-1]-prevClose2)/prevClose2*10000))/100:0;
-    const hasLargeGap=lastBarGapPct>=3.0;
-    // P0: attempt live price (direct Yahoo — CORS optional, graceful fallback)
-    let livePrice=null,priceIsLive=false,liveChangePct=null;
-    if(isCached){
-      const raw=await fetchLivePrice(ticker);
-      if(raw&&raw>0){livePrice=Math.round(raw*100)/100;priceIsLive=true;liveChangePct=Math.round((livePrice-price)/price*10000)/100;}
-    }
-    const stopBroken=priceIsLive?(livePrice<=stopLoss):false;
-    // P3: EMA stack and RSI band flags
-    const emaStackOk=!!(ema20&&ema50&&ema20>ema50);
-    const rsiAboveBand=rsi>70;
-    const ema20prev6=closes.length>26?calcEMA(closes.slice(0,-6),20):null;
-    const ema20slope6=ema20&&ema20prev6?Math.round((ema20/ema20prev6-1)*1000)/10:null;
+    let earnGapInData=null;
+    if(earn.last){const k=dates.findIndex(d=>d>=earn.last);if(k>0)earnGapInData=(closes[n-1]/closes[k-1]-1)*100;}
+    const holding=holdings[ticker]||null;
+    const F=CORE.computeFlags({price:priceScanner,live:useLive?cur:null,barDate,asOf,today:CORE.nyDate(),atr,stopScanner,
+      hi20:recentHigh20,ema20,ema50,rsi,earnNext:earn.date,earnLast:earn.last,earnGapInData,volRatio,lastBarChgPct,
+      isEtf:CORE.ETFS.has(ticker),holding},PARAMS);
+    const lastBarGapPct=r2(Math.abs(lastBarChgPct));
+    const ema20prev6=C.length>26?calcEMA(C.slice(0,-6),20):null;
+    const ema20slope6=ema20&&ema20prev6?r1((ema20/ema20prev6-1)*100):null;
+    const barSource=`${useLive?`precio vivo ${live.date} · `:''}barras al cierre ${barDate}${result._cached?` (caché, corrida ${String(result._cached).replace('T',' ').replace('Z',' UTC')})`:' (Yahoo directo)'}`;
     const setupWarning=(setup==='Trend Following'&&w52Pct<35)?`Precio en zona baja del año (${w52Pct}%) — EMA alcista pero tendencia de fondo cuestionable`:null;
-    return{t:ticker,n:NAMES[ticker]||ticker,price,changePct,rsi,volRatio,setup,score,strength,stopLoss,target,rr,recentHigh20,recentHigh126,realRR20,realRR126,earningDate:earn.date,earningDays:earn.days,earningBlocked:earn.blocked,earningCaution:earn.caution,earningPast:earn.past,barSource,priceDate,tradingDaysOld,isStale,lastBarGapPct,hasLargeGap,livePrice,priceIsLive,liveChangePct,stopBroken,emaStackOk,rsiAboveBand,ema20slope6,w52Low,w52High,w52Pct,w52Val,ema20,ema50,atr,isManual,setupWarning};
-  }catch(e){return null}
+    return{t:ticker,n:NAMES[ticker]||ticker,price:cur,priceScanner,priceIsLive:useLive,livePrice:useLive?cur:null,
+      liveChangePct:useLive?changePct:null,changePct,rsi,volRatio,setup,score,strength,stopLoss,stopScanner,target,rr,
+      recentHigh20,recentHigh126,realRR20,realRR126,rrLive:F.rrLive,rrScanner:F.rrScanner,extPct:F.extPct,riskPct:F.riskPct,stopAtr:F.stopAtr,
+      earningDate:earn.date,earningDays:earn.days,earningLast:earn.last,earningTime:earn.time,earningSrc:earn.src,
+      earningBlocked:CORE.has(F.flags,'EARNINGS_BLOCK'),earningCaution:earn.caution,
+      barDate,priceDate:barDate,barSource,sessionsBehind:F.sessionsBehind,tradingDaysOld:F.sessionsBehind,isStale:F.sessionsBehind>=1,
+      flags:F.flags,stopBroken:CORE.has(F.flags,'STOP_BROKEN'),holding,
+      emaStackOk:!!(ema20&&ema50&&ema20>ema50),rsiAboveBand:rsi>PARAMS.rsiHi,ema20slope6,lastBarGapPct,hasLargeGap:lastBarGapPct>=3,
+      w52Low,w52High,w52Pct,w52Val,ema20,ema50,atr,isManual,setupWarning};
+  }catch(e){console.warn('processStock',ticker,e);return null}
 }
 
 // ── PORTFOLIO SCAN ─────────────────────────────────────────────────
@@ -1000,8 +945,9 @@ function renderMarketContext(ctx){
     </div>
     <div style="font-size:11px;opacity:0.75">Setups prioritarios: ${setupTags}</div>`;}
 
+const flagCodes=r=>(r.flags||[]).filter(f=>f.level!=='info').map(f=>f.code);
 function generateSummaryPrompt(picks,regime){
-  const lines=picks.map((r,i)=>`${i+1}. ${r.t} (${r.n}): ${r.setup}, Score ${r.score}/95, RSI ${r.rsi}, Precio $${r.price.toFixed(2)}, Target $${r.target.toFixed(2)}, Stop $${r.stopLoss.toFixed(2)}, R/R ${r.rr}:1, Vol ${r.volRatio.toFixed(1)}x, 52W ${r.w52Pct}%`).join('\n');
+  const lines=picks.map((r,i)=>`${i+1}. ${r.t} (${r.n}): ${r.setup}, Score ${r.score}/95, RSI ${r.rsi}, Precio $${r.price.toFixed(2)} (${r.priceIsLive?'vivo':'cierre '+r.barDate}), Target $${r.target.toFixed(2)}, Stop $${r.stopLoss.toFixed(2)}, R/R ${r.rr}:1, R/R real ${r.rrLive==null?'—':r.rrLive.toFixed(2)}, Vol ${r.volRatio.toFixed(2)}x, 52W ${r.w52Pct}%, Banderas: ${flagCodes(r).join(', ')||'ninguna'}`).join('\n');
   return `Soy un swing trader. Hoy el scanner detectó: ${regime.description}.\n\nMejores oportunidades identificadas:\n${lines}\n\nPara cada ticker: 1) ¿Confirmas la tesis técnica? 2) Catalizadores o riesgos próximos 3) Niveles clave de soporte/resistencia 4) ¿Cuál priorizarías y por qué?`;
 }
 
@@ -1010,7 +956,10 @@ let _lastSummaryPrompt='';
 function renderBestSummary(results,regime){
   const container=document.getElementById('best-summary-container');
   if(!container)return;
-  const topPicks=results.filter(r=>r.setup!=='None'&&r.strength!=='low').sort((a,b)=>b.score-a.score).slice(0,5);
+  // Blocked or hidden rows never reach the summary; clean rows rank first
+  const nFlags=r=>flagCodes(r).length;
+  const topPicks=results.filter(r=>r.setup!=='None'&&r.strength!=='low'&&!(r.flags||[]).some(f=>f.level==='block'||f.level==='hide'))
+    .sort((a,b)=>(nFlags(a)>0)-(nFlags(b)>0)||b.score-a.score).slice(0,5);
   if(topPicks.length===0){container.innerHTML='';return;}
   _lastSummaryPrompt=generateSummaryPrompt(topPicks,regime);
   const medals=['🥇','🥈','🥉','#4','#5'];
@@ -1019,7 +968,7 @@ function renderBestSummary(results,regime){
     return`<div class="best-entry-row">
       <span class="best-entry-medal">${medals[i]}</span>
       <span class="best-entry-ticker">${r.t}</span>
-      <span class="best-entry-meta"><span class="setup-badge ${getSetupClass(r.setup)}" style="margin-right:6px">${r.setup}</span>${r.n} · RSI ${r.rsi} · Vol ${r.volRatio.toFixed(1)}x · R/R ${r.rr}:1${bonus}</span>
+      <span class="best-entry-meta"><span class="setup-badge ${getSetupClass(r.setup)}" style="margin-right:6px">${r.setup}</span>${r.n} · ${r.priceIsLive?'vivo':'cierre '+fmtShortDate(r.barDate)} · RSI ${r.rsi} · Vol ${r.volRatio.toFixed(1)}x · R/R real ${r.rrLive==null?'—':r.rrLive.toFixed(2)}${bonus}${nFlags(r)?`<br><span style="color:#fb923c">⚠ ${flagCodes(r).join(' · ')}</span>`:' <span style="color:#4ade80">· limpia</span>'}</span>
       <div style="text-align:right;font-size:12px;min-width:90px"><div style="color:#4ade80;font-weight:600">→ $${r.target.toFixed(2)}</div><div style="color:#f87171;font-size:11px">Stop $${r.stopLoss.toFixed(2)}</div></div>
       <span class="best-entry-score">${r.score}</span>
     </div>`;
@@ -1040,6 +989,19 @@ function copyBestSummary(){
 }
 
 // ── SCANNER SCAN ──────────────────────────────────────────────────
+let marketRegime={scoreBonus:{},regimeLabel:'—',description:''},scanAsOf=null;
+// P5: remember tickers already suggested today (per browser)
+function markSeenToday(results){
+  const today=CORE.nyDate(),time=new Date().toLocaleTimeString('es-PA',{hour:'2-digit',minute:'2-digit'});
+  let seen={};try{seen=JSON.parse(localStorage.getItem('swing_seen_v1')||'{}');}catch(e){}
+  if(seen.date!==today)seen={date:today,t:{}};
+  results.forEach(r=>{
+    if(seen.t[r.t]&&!r.flags.some(f=>f.code==='SEEN_TODAY'))r.flags.push({code:'SEEN_TODAY',level:'info',msg:`Ya sugerido hoy (${seen.t[r.t]})`});
+    else if(!seen.t[r.t])seen.t[r.t]=time;
+  });
+  try{localStorage.setItem('swing_seen_v1',JSON.stringify(seen));}catch(e){}
+}
+
 async function runScan(){
   const universe=document.getElementById('universe-select').value;
   const btn=document.getElementById('scan-btn');
@@ -1048,9 +1010,10 @@ async function runScan(){
   document.getElementById('best-summary-container').innerHTML='';
   const pw=document.getElementById('progress-wrap');
   pw.style.display='block';
+  scanAsOf=CORE.lastCompletedSession();
 
-  // Load earnings data and market regime in parallel
-  await Promise.all([loadEarnings(),detectMarketRegime().then(r=>{renderMarketContext(r)})]);
+  const [regime]=await Promise.all([detectMarketRegime(),loadEarnings(),loadPortfolio(),loadManifest()]);
+  marketRegime=regime;renderMarketContext(regime);
 
   let universeTickers=[];
   if(universe!=='manual_only'){
@@ -1066,33 +1029,37 @@ async function runScan(){
   document.getElementById('results-container').innerHTML=sk;
 
   allResults=[];let done=0,errors=0;
-  for(let i=0;i<allTickers.length;i++){
-    const r=await processStock(allTickers[i],manualSet.has(allTickers[i]));
-    if(r)allResults.push(r);else errors++;
-    done++;
-    const pct=Math.round(done/allTickers.length*100);
-    document.getElementById('progress-fill').style.width=pct+'%';
-    document.getElementById('progress-text').textContent=`Analizando ${done}/${allTickers.length}: ${allTickers[i]}... (${pct}%)`;
-  }
-  pw.style.display='none';btn.disabled=false;btn.textContent='▶ Ejecutar Scan';
+  try{
+    for(let i=0;i<allTickers.length;i++){
+      const r=await processStock(allTickers[i],manualSet.has(allTickers[i]),scanAsOf);
+      if(r)allResults.push(r);else errors++;
+      done++;
+      const pct=Math.round(done/allTickers.length*100);
+      document.getElementById('progress-fill').style.width=pct+'%';
+      document.getElementById('progress-text').textContent=`Analizando ${done}/${allTickers.length}: ${allTickers[i]}... (${pct}%)`;
+    }
+  }finally{pw.style.display='none';btn.disabled=false;btn.textContent='▶ Ejecutar Scan';}
 
   const eb=document.getElementById('error-box');
   if(allResults.length===0){eb.className='error-box warn';eb.style.display='block';eb.textContent=`No se obtuvieron datos (${errors} errores). Espera 30 seg e intenta de nuevo.`;document.getElementById('results-container').innerHTML='<div class="empty-state"><div>No se obtuvieron datos. Intenta de nuevo.</div></div>';return}
   if(errors>0){eb.className='error-box ok';eb.style.display='block';eb.textContent=`Scan completado: ${allResults.length} analizados. ${errors} no disponibles.`}
 
-  // Apply regime score bonuses and re-evaluate strength
+  // Regime bonus, then P7 cap for flagged rows, then strength
   allResults.forEach(r=>{
     const bonus=marketRegime.scoreBonus[r.setup]||0;
-    if(bonus>0){r.score=Math.min(95,r.score+bonus);r.regimeBonus=bonus;r.strength=r.score>=65?'high':r.score>=42?'medium':'low';}
+    if(bonus>0){r.score=Math.min(95,r.score+bonus);r.regimeBonus=bonus;}
+    r.score=CORE.capScore(r.score,r.rsi,r.flags,PARAMS);
+    r.strength=r.score>=65?'high':r.score>=42?'medium':'low';
   });
   allResults.sort((a,b)=>{if(a.isManual&&!b.isManual)return-1;if(!a.isManual&&b.isManual)return 1;return b.score-a.score});
   const withSetup=allResults.filter(r=>r.strength!=='low'||r.isManual);
   allResults=withSetup.length>0?withSetup:allResults.slice(0,10);
-  // Render best entries summary
+  markSeenToday(allResults);
   renderBestSummary(allResults,marketRegime);
   updateMetrics(allTickers.length);renderResults();
   const now=new Date();
-  document.getElementById('last-scan').textContent=`Live · ${now.toLocaleDateString('es-PA')} ${now.toLocaleTimeString('es-PA',{hour:'2-digit',minute:'2-digit'})} · ${marketRegime.regimeLabel} · ${allResults.length} oportunidades`;
+  const oldest=allResults.reduce((m,r)=>!m||r.barDate<m?r.barDate:m,null);
+  document.getElementById('last-scan').textContent=`${now.toLocaleDateString('es-PA')} ${now.toLocaleTimeString('es-PA',{hour:'2-digit',minute:'2-digit'})} · barras al ${oldest||'—'} · ${marketRegime.regimeLabel} · ${allResults.length} filas`;
 }
 
 function updateMetrics(total){
@@ -1108,8 +1075,9 @@ function updateMetrics(total){
 }
 
 // ── TRIPLE CONFIRMATION TIER LOGIC ────────────────────────────────
+// A row with any warning flag can't be "Entrada inmediata"
 function calcTierLevel(r){
-  const c1=r.rsi>=55&&r.rsi<=70;
+  const c1=r.rsi>=PARAMS.rsiLo&&r.rsi<=PARAMS.rsiHi;
   const c2=r.volRatio>1.0;
   const c3=!!(r.ema20&&r.ema50&&r.price>r.ema20&&r.price>r.ema50);
   const count=(c1?1:0)+(c2?1:0)+(c3?1:0);
@@ -1117,7 +1085,10 @@ function calcTierLevel(r){
   if(!c1)missing.push('RSI');
   if(!c2)missing.push('Volumen');
   if(!c3)missing.push('Precio>EMAs');
-  return{tier:count===3?1:count===2?2:3,c1,c2,c3,missing};
+  let tier=count===3?1:count===2?2:3;
+  const warn=(r.flags||[]).filter(f=>f.level!=='info');
+  if(tier===1&&warn.length){tier=2;missing.push('banderas');}
+  return{tier,c1,c2,c3,missing};
 }
 
 function getSetupClass(s){if(s==='Trend Following')return'setup-trend';if(s==='Breakout')return'setup-breakout';if(s==='Pullback EMA')return'setup-pullback';if(s==='Squeeze')return'setup-squeeze';return'setup-none'}
@@ -1125,60 +1096,63 @@ function getValBadge(v){if(v==='cheap')return'<span class="w52-badge w52-cheap">
 function getValColor(v){return v==='cheap'?'#4ade80':v==='mid'?'#facc15':'#f87171'}
 function render52W(r){const color=getValColor(r.w52Val),pct=Math.min(Math.max(r.w52Pct,2),98);return`<div><div class="w52-row"><span class="w52-num">$${r.w52Low.toFixed(0)}</span>${getValBadge(r.w52Val)}<span class="w52-num">$${r.w52High.toFixed(0)}</span></div><div class="w52-bar-track"><div style="position:absolute;top:0;left:0;width:${pct}%;height:100%;background:linear-gradient(to right,#1e2a1e,${color});border-radius:3px"></div><div class="w52-dot" style="left:${pct}%;background:${color}"></div></div><div class="w52-pct">${r.w52Pct}% del rango anual</div></div>`}
 
+// P8: scan health summary
+function renderScanHealth(rows){
+  const cnt=code=>rows.filter(r=>CORE.has(r.flags,code)).length;
+  const stale=cnt('STALE'),hidden=rows.filter(r=>r.flags.some(f=>f.level==='hide')).length;
+  const noEarn=cnt('NO_EARNINGS_DATA'),broken=cnt('STOP_BROKEN'),eBlock=cnt('EARNINGS_BLOCK'),post=cnt('POST_EARNINGS_GAP');
+  const clean=rows.filter(r=>CORE.isClean(r.flags)).length;
+  const oldest=rows.reduce((m,r)=>!m||r.barDate<m?r.barDate:m,null);
+  const live=rows.filter(r=>r.priceIsLive).length;
+  const bad=stale>0||noEarn>0;
+  const M=pipelineManifest;
+  const pipe=M?`Pipeline: corrida ${String(M.run_at||M.run_date||'—').replace('T',' ').replace('Z',' UTC')} · referencia ${M.ref_date||M.expected_trading_day||'—'} · ${(M.stale_tickers||[]).length} tickers atrasados${(M.tickers_failed||[]).length?` · fallidos: ${M.tickers_failed.join(', ')}`:''}`:'Pipeline: sin manifest';
+  const c=bad?'#f87171':'#4ade80',bg=bad?'#1a0505':'#051a0a';
+  const item=(n,l,warn)=>`<span style="color:${n&&warn?c:'#888'}"><b style="color:${n&&warn?c:'#ddd'}">${n}</b> ${l}</span>`;
+  return`<div id="scan-health" style="background:${bg};border:1px solid ${c}55;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px">
+    <div style="font-weight:600;color:${c};margin-bottom:6px">${bad?'⚠ Salud del scan: revisar antes de operar':'✓ Salud del scan'} — último cierre completo: ${scanAsOf||'—'} · barra más vieja: ${oldest||'—'}</div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap">${item(clean,'limpias',false)}${item(stale,'STALE',true)}${item(hidden,'ocultas (≥'+PARAMS.hideStaleSessions+' sesiones)',true)}${item(noEarn,'earnings sin dato',true)}${item(broken,'stop roto',true)}${item(eBlock,'earnings ≤'+PARAMS.earningsDays+'d',true)}${item(post,'post-earnings',true)}${item(live,'con precio vivo',false)}</div>
+    <div style="color:#555;margin-top:6px">${pipe}</div>
+  </div>`;
+}
+function toggleShowStale(){showStale=!showStale;renderResults();}
+
 function renderResults(){
   let filtered=[...allResults];
   if(filters.setup!=='all')filtered=filtered.filter(r=>r.setup===filters.setup);
   if(filters.str!=='all')filtered=filtered.filter(r=>r.strength===filters.str);
   if(filters.val!=='all')filtered=filtered.filter(r=>r.w52Val===filters.val);
   if(filters.src==='manual')filtered=filtered.filter(r=>r.isManual);
-  // Calculate and cache tier for every result
+  const health=renderScanHealth(allResults);
+  // P0: rows ≥ N sessions behind are hidden unless the user asks for them
+  const isHidden=r=>r.flags.some(f=>f.level==='hide');
+  const hiddenCount=filtered.filter(isHidden).length;
+  if(!showStale)filtered=filtered.filter(r=>!isHidden(r));
   filtered.forEach(r=>r._tier=calcTierLevel(r));
-  // Sort: tier first → manuals before universe within tier → score descending
   filtered.sort((a,b)=>{
     if(a._tier.tier!==b._tier.tier)return a._tier.tier-b._tier.tier;
     if(a.isManual!==b.isManual)return a.isManual?-1:1;
     return b.score-a.score;
   });
   window._fr=filtered;
-  if(filtered.length===0){document.getElementById('results-container').innerHTML='<div class="empty-state"><div>No hay resultados para ese filtro</div></div>';return}
-  // P1: separate earnings-blocked from actionable
-  // P0: stop-broken tickers (live price ≤ ATR stop) get their own section
-  const blocked=filtered.filter(r=>r.earningBlocked);
-  const broken=filtered.filter(r=>!r.earningBlocked&&r.stopBroken);
-  const actionable=filtered.filter(r=>!r.earningBlocked&&!r.stopBroken);
+  const staleToggle=hiddenCount?`<div style="font-size:12px;color:#f87171;margin-bottom:10px">${showStale?`Mostrando ${hiddenCount} filas con datos de ≥${PARAMS.hideStaleSessions} sesiones de atraso.`:`${hiddenCount} filas ocultas por datos de ≥${PARAMS.hideStaleSessions} sesiones de atraso.`} <button class="btn" style="font-size:11px;padding:3px 10px" onclick="toggleShowStale()">${showStale?'Ocultarlas':'Mostrar de todos modos'}</button></div>`:'';
+  if(filtered.length===0){document.getElementById('results-container').innerHTML=health+staleToggle+'<div class="empty-state"><div>No hay resultados para ese filtro</div></div>';return}
+  const blockOf=r=>['STOP_BROKEN','EARNINGS_BLOCK','HOLDING'].find(c=>CORE.has(r.flags,c));
+  const broken=filtered.filter(r=>blockOf(r)==='STOP_BROKEN');
+  const blocked=filtered.filter(r=>blockOf(r)==='EARNINGS_BLOCK');
+  const held=filtered.filter(r=>blockOf(r)==='HOLDING');
+  const actionable=filtered.filter(r=>!blockOf(r));
   const tier1=actionable.filter(r=>r._tier.tier===1);
   const tier2=actionable.filter(r=>r._tier.tier===2);
   const tier3=actionable.filter(r=>r._tier.tier===3);
-  let html='<div class="results-header"><span>Instrumento · Nivel</span><span>Precio</span><span>Cambio</span><span>RSI</span><span>EMA20/50</span><span>Vol Ratio</span><span>Entry / ATR Stop</span><span>Rango 52W</span><span>Score</span></div>';
-  if(tier1.length>0){
-    html+=`<div class="section-divider div-tier-1">✓ Triple Confirmation — Entrada inmediata (${tier1.length})</div>`;
-    tier1.forEach((r,rank)=>{html+=buildCard(r,filtered.indexOf(r),rank+1)});
-  }
-  if(tier2.length>0){
-    html+=`<div class="section-divider div-tier-2">⚡ En Radar — Monitorear (${tier2.length})</div>`;
-    tier2.forEach((r,rank)=>{html+=buildCard(r,filtered.indexOf(r),rank+1)});
-  }
-  if(tier3.length>0){
-    html+=`<div class="section-divider div-tier-3">◎ En Seguimiento — Sin señal activa (${tier3.length})</div>`;
-    tier3.forEach((r,rank)=>{html+=buildCard(r,filtered.indexOf(r),rank+1)});
-  }
-  if(broken.length>0){
-    html+=`<div class="section-divider" style="background:#1a0000;border-color:#4a0000;color:#f87171">🛑 Stop roto — precio vivo bajo el stop (${broken.length})</div>`;
-    broken.forEach(r=>{html+=buildCard(r,filtered.indexOf(r),0)});
-  }
-  if(blocked.length>0){
-    html+=`<div class="section-divider" style="background:#1a0505;border-color:#4a1a1a;color:#f87171">🚫 Earnings próximos — No entrar (${blocked.length})</div>`;
-    blocked.forEach(r=>{html+=buildCard(r,filtered.indexOf(r),0)});
-  }
-  // Freshness banner: warn if any result has data >= 2 trading days old
-  const cachedRes=filtered.filter(r=>r.priceDate);
-  if(cachedRes.length>0){
-    const maxOld=Math.max(...cachedRes.map(r=>r.tradingDaysOld||0));
-    if(maxOld>=2){
-      const oldestDate=cachedRes.reduce((a,b)=>a.priceDate<b.priceDate?a:b).priceDate;
-      html=`<div style="background:#1a0800;border:1px solid #fb923c55;border-radius:6px;padding:8px 14px;margin-bottom:10px;font-size:12px;color:#fb923c">⚠ Datos desactualizados — hasta ${maxOld} días hábiles de retraso (más antiguo: cierre del ${fmtShortDate(oldestDate)}). Verificar precios contra IBKR antes de operar.</div>`+html;
-    }
-  }
+  let html=health+staleToggle+'<div class="results-header"><span>Instrumento · Nivel</span><span>Precio</span><span>Cambio</span><span>RSI</span><span>EMA20/50</span><span>Vol Ratio</span><span>Entry / ATR Stop</span><span>Rango 52W</span><span>Score</span></div>';
+  const section=(rows,title,cls,style,ranked)=>{if(!rows.length)return;html+=`<div class="section-divider ${cls}" style="${style}">${title} (${rows.length})</div>`;rows.forEach((r,k)=>{html+=buildCard(r,filtered.indexOf(r),ranked?k+1:0)});};
+  section(tier1,'✓ Triple Confirmation sin banderas — Entrada inmediata','div-tier-1','',true);
+  section(tier2,'⚡ En Radar — Monitorear (incluye señales con banderas)','div-tier-2','',true);
+  section(tier3,'◎ En Seguimiento — Sin señal activa','div-tier-3','',true);
+  section(broken,'🛑 Stop roto — precio vivo bajo el stop','','background:#1a0000;border-color:#4a0000;color:#f87171',false);
+  section(blocked,`🚫 Earnings en ≤ ${PARAMS.earningsDays} días — No entrar`,'','background:#1a0505;border-color:#4a1a1a;color:#f87171',false);
+  section(held,'📁 Ya en cartera / orden pendiente / excluido','','background:#0a0f1a;border-color:#1a2a4a;color:#60a5fa',false);
   document.getElementById('results-container').innerHTML=html;
 }
 
@@ -1209,6 +1183,13 @@ function getWhyAttractive(r){
   return reasons.slice(0,3);
 }
 
+const FLAG_LABEL={STALE:'STALE',STOP_BROKEN:'STOP ROTO',EARNINGS_BLOCK:'EARNINGS',POST_EARNINGS_GAP:'POST-EARNINGS',NO_EARNINGS_DATA:'EARNINGS ?',
+  RR_LOW:'R/R BAJO',STOP_TOO_CLOSE:'STOP PEGADO',RISK_WIDE:'RIESGO AMPLIO',STACK_INV:'PILA INV',BELOW_EMA20:'< EMA20',RSI_OUT:'RSI FUERA',
+  EXTENDED:'EXTENDIDO',VOL_DOWN_DAY:'VOL ↓',HOLDING:'EN CARTERA',SEEN_TODAY:'YA VISTO HOY'};
+const FLAG_COLOR={block:'#f87171',hide:'#f87171',warn:'#fb923c',info:'#777'};
+function flagChips(r){
+  return(r.flags||[]).map(f=>`<span title="${f.msg.replace(/"/g,'&quot;')}" style="display:inline-block;margin:3px 3px 0 0;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;color:${FLAG_COLOR[f.level]};border:1px solid ${FLAG_COLOR[f.level]}55;background:${FLAG_COLOR[f.level]}14">${FLAG_LABEL[f.code]||f.code}</span>`).join('');
+}
 function buildCard(r,i,rank){
   const tier=r._tier||calcTierLevel(r);
   const rsiColor=r.rsi<35?'#4ade80':r.rsi<50?'#fb923c':r.rsi>70?'#f87171':'#60a5fa';
@@ -1252,16 +1233,14 @@ function buildCard(r,i,rank){
       ${tierBadgeHtml}
       ${criteriaHtml}
       <span class="setup-badge ${getSetupClass(r.setup)}" style="margin-top:4px">${r.setup}</span>
-      ${r.stopBroken?`<div style="background:#2a0000;border:1px solid #f87171;border-radius:4px;padding:2px 7px;font-size:11px;color:#f87171;font-weight:600;display:inline-block;margin-top:4px">🛑 STOP ROTO $${r.livePrice?.toFixed(2)}</div>`:''}
-      ${!r.emaStackOk&&r.setup==='Trend Following'?`<div style="font-size:10px;color:#fb923c;margin-top:2px">⚠ EMA20 &lt; EMA50</div>`:''}
-      ${r.rsiAboveBand?`<div style="font-size:10px;color:#fb923c;margin-top:1px">⚠ RSI ${r.rsi} — sobre 70</div>`:''}
+      <div>${flagChips(r)}</div>
     </div>
-    <div class="price">${r.priceIsLive?`$${r.livePrice.toFixed(2)}<div style="font-size:9px;color:#555;margin-top:1px;font-weight:normal">D-1 $${r.price.toFixed(2)}</div>`:`$${r.price.toFixed(2)}${r.priceDate?`<div style="font-size:9px;color:${staleDateColor(r.tradingDaysOld)};margin-top:1px;font-weight:normal">${r.isStale?'⚠ ':''}cierre ${fmtShortDate(r.priceDate)}</div>`:''}`}</div>
-    <div class="${(r.priceIsLive?r.liveChangePct:r.changePct)>=0?'change-pos':'change-neg'}">${r.priceIsLive?'hoy: ':''}${(r.priceIsLive?r.liveChangePct:r.changePct)>=0?'+':''}${(r.priceIsLive?r.liveChangePct:r.changePct).toFixed(2)}%</div>
+    <div class="price">$${r.price.toFixed(2)}<div style="font-size:9px;color:${r.priceIsLive?'#60a5fa':staleDateColor(r.sessionsBehind)};margin-top:1px;font-weight:normal">${r.priceIsLive?`vivo · barras ${fmtShortDate(r.barDate)}`:`${r.isStale?'⚠ ':''}cierre ${fmtShortDate(r.barDate)}${r.sessionsBehind?` (−${r.sessionsBehind})`:''}`}</div></div>
+    <div class="${r.changePct>=0?'change-pos':'change-neg'}">${r.changePct>=0?'+':''}${r.changePct.toFixed(2)}%<div style="font-size:9px;color:#555">${r.priceIsLive?`vs scanner $${r.priceScanner.toFixed(2)}`:'último día'}</div></div>
     <div><div class="rsi-val">${r.rsi}</div><div class="rsi-bar"><div class="rsi-fill" style="width:${r.rsi}%;background:${rsiColor}"></div></div></div>
     <div class="ema-info"><span style="color:${ema20color}">E20 $${r.ema20?r.ema20.toFixed(1):'—'}</span><br><span style="color:${ema50color}">E50 $${r.ema50?r.ema50.toFixed(1):'—'}</span></div>
     <div style="font-size:13px;color:#ccc">${r.volRatio.toFixed(1)}x</div>
-    <div class="target-info">$${r.price.toFixed(2)} → <span class="target-price">$${r.target.toFixed(2)}</span><br><span class="stop-price">ATR Stop $${r.stopLoss.toFixed(2)}</span> · R/R ${r.rr}:1${r.realRR20!==null?`<br><span style="font-size:10px;color:${r.realRR20<1.5?'#f87171':'#888'}">R/R real 20d: ${r.realRR20}:1${r.realRR20<1.5?' ⚠':''}</span>`:''}${r.earningBlocked?`<br><span style="font-size:10px;color:#f87171">🚫 Earnings ${r.earningDays===0?'HOY':r.earningDays===1?'mañana':`en ${r.earningDays}d`}</span>`:r.earningCaution?`<br><span style="font-size:10px;color:#fb923c">⚠ Earnings en ${r.earningDays}d</span>`:''}${r.hasLargeGap?`<br><span style="font-size:10px;color:#fb923c">⚠ Gap ${r.lastBarGapPct}% último cierre</span>`:''}</div>
+    <div class="target-info">$${r.price.toFixed(2)} → <span class="target-price">$${r.target.toFixed(2)}</span><br><span class="stop-price">ATR Stop $${r.stopLoss.toFixed(2)}</span> · R/R target ${r.rr}:1<br><span style="font-size:10px;color:${r.rrLive==null||r.rrLive<PARAMS.minRR?'#f87171':'#888'}">R/R real: ${r.rrLive==null?'—':r.rrLive.toFixed(2)+':1'} (máx 20d $${r.recentHigh20})</span>${r.earningDate?`<br><span style="font-size:10px;color:${r.earningBlocked?'#f87171':r.earningCaution?'#fb923c':'#666'}">Earnings ${r.earningDate}${r.earningDays!=null?` (${r.earningDays===0?'hoy':r.earningDays+'d'})`:''}</span>`:`<br><span style="font-size:10px;color:#fb923c">Earnings: ${r.earningLast?'último '+r.earningLast:'sin dato'}</span>`}</div>
     <div>${render52W(r)}</div>
     <div><span class="${scoreClass}">${r.score}</span>${r.regimeBonus?`<div style="font-size:10px;color:#4ade80;margin-top:2px">+${r.regimeBonus} régimen</div>`:''}
     <button class="save-btn" onclick="event.stopPropagation();saveIdx(${i})">Guardar</button></div>
@@ -1274,20 +1253,21 @@ function buildCard(r,i,rank){
     <div class="detail-grid">
       <div><div class="detail-label">Setup</div><div class="detail-value">${r.setup}</div></div>
       <div><div class="detail-label">Fuerza</div><div class="detail-value ${r.strength==='high'?'green':''}">${r.strength==='high'?'Alta ★':r.strength==='medium'?'Media':'Baja'}</div></div>
-      <div><div class="detail-label">Precio</div><div class="detail-value">$${r.price.toFixed(2)}</div></div>
+      <div><div class="detail-label">Precio</div><div class="detail-value">$${r.price.toFixed(2)} <span style="font-size:11px;color:#555">${r.priceIsLive?`vivo (scanner $${r.priceScanner.toFixed(2)})`:`cierre ${r.barDate}`}</span></div></div>
       <div><div class="detail-label">RSI (14)</div><div class="detail-value">${r.rsi} ${r.rsi<35?'↓ Sobrevendido':r.rsi>70?'↑ Sobrecomprado':'— Neutro'}</div></div>
       <div><div class="detail-label">EMA20</div><div class="detail-value ${r.ema20&&r.price>r.ema20?'green':'red'}">${r.ema20?`$${r.ema20.toFixed(1)}`:'—'}${r.ema20slope6!==null?` <span style="font-size:10px;color:${r.ema20slope6>0?'#4ade80':'#f87171'}">slope ${r.ema20slope6>0?'+':''}${r.ema20slope6}%/6d</span>`:''}</div></div>
       <div><div class="detail-label">EMA50</div><div class="detail-value ${r.ema50&&r.price>r.ema50?'green':'red'}">${r.ema50?`$${r.ema50.toFixed(1)}`:'—'} <span style="font-size:10px;color:${r.emaStackOk?'#4ade80':'#fb923c'}">${r.emaStackOk?'pila ✓':'pila ✗ EMA20<EMA50'}</span></div></div>
       <div><div class="detail-label">ATR (14)</div><div class="detail-value">${r.atr?`$${r.atr.toFixed(2)}`:'—'}</div></div>
-      <div><div class="detail-label">ATR Stop (2x)</div><div class="detail-value red">${r.stopLoss?`$${r.stopLoss.toFixed(2)}`:'—'}</div></div>
+      <div><div class="detail-label">ATR Stop (2x, al precio actual)</div><div class="detail-value red">${r.stopLoss?`$${r.stopLoss.toFixed(2)}`:'—'}${r.priceIsLive&&r.stopScanner?` <span style="font-size:11px;color:#555">· stop barra ${r.barDate}: $${r.stopScanner.toFixed(2)} (${r.stopAtr!=null?r.stopAtr.toFixed(2)+' ATR':'—'})</span>`:''}</div></div>
       <div><div class="detail-label">Target (+${Math.round((r.target/r.price-1)*100)}%)</div><div class="detail-value green">$${r.target.toFixed(2)}</div></div>
       <div><div class="detail-label">R/R ratio</div><div class="detail-value">${r.rr}:1 <span style="font-size:11px;color:#555">(target +${Math.round((r.target/r.price-1)*100)}%)</span></div></div>
-      <div><div class="detail-label">R/R real 20d</div><div class="detail-value ${r.realRR20!==null&&r.realRR20<1.5?'red':r.realRR20>=1.5?'green':''}">${r.realRR20!==null?r.realRR20+':1 (máx $'+r.recentHigh20+')':`—`}${r.realRR20!==null&&r.realRR20<1.5?' ⚠ resistencia cerca':''}</div></div>
+      <div><div class="detail-label">R/R real 20d</div><div class="detail-value ${r.rrLive==null||r.rrLive<PARAMS.minRR?'red':'green'}">${r.rrLive!=null?r.rrLive.toFixed(2)+':1 (máx $'+r.recentHigh20+')':'— (precio ≤ stop)'}${r.priceIsLive&&r.rrScanner!=null?` <span style="font-size:11px;color:#555">· con stop del scanner ${r.rrScanner.toFixed(2)}</span>`:''}</div></div>
       <div><div class="detail-label">R/R real 6m</div><div class="detail-value ${r.realRR126!==null&&r.realRR126<1.5?'red':r.realRR126>=1.5?'green':''}">${r.realRR126!==null?r.realRR126+':1 (máx $'+r.recentHigh126+')':'—'}</div></div>
-      <div><div class="detail-label">Vol ratio</div><div class="detail-value">${r.volRatio.toFixed(1)}x <span style="font-size:11px;color:#555">(día anterior vs mediana 20d)</span></div></div>
-      <div><div class="detail-label">Datos</div><div class="detail-value" style="color:${r.isStale?'#fb923c':r.priceDate?'#888':'#4ade80'}">${r.barSource||'—'}${r.isStale?` <span style="background:#fb923c22;border:1px solid #fb923c55;border-radius:3px;padding:1px 5px;font-size:10px">STALE</span>`:''}${r.hasLargeGap?` <span style="background:#fb923c22;border:1px solid #fb923c55;border-radius:3px;padding:1px 5px;font-size:10px">gap ${r.lastBarGapPct}%</span>`:''}</div></div>
+      <div><div class="detail-label">Vol ratio</div><div class="detail-value">${r.volRatio.toFixed(2)}x <span style="font-size:11px;color:#555">(último día completo ${r.barDate} / media 20 sesiones previas)</span></div></div>
+      <div><div class="detail-label">Datos</div><div class="detail-value" style="color:${r.isStale?'#fb923c':'#888'};font-size:12px">${r.barSource||'—'}</div></div>
       <div><div class="detail-label">Posición 52W</div><div class="detail-value ${r.w52Val==='cheap'?'green':r.w52Val==='mid'?'amber':'red'}">${r.w52Pct}% — ${r.w52Val==='cheap'?'Barato':r.w52Val==='mid'?'Zona media':'Caro'}</div></div>
     </div>
+    ${(r.flags||[]).length?`<div style="background:#140c05;border:1px solid #fb923c33;border-radius:8px;padding:10px;margin-top:8px"><div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Banderas</div>${r.flags.map(f=>`<div style="font-size:12px;color:${FLAG_COLOR[f.level]};margin-bottom:3px"><b>${f.code}</b> — ${f.msg}</div>`).join('')}</div>`:`<div style="background:#051a0a;border:1px solid #1a3a1a;border-radius:8px;padding:10px;margin-top:8px;font-size:12px;color:#4ade80">✓ Sin banderas</div>`}
     ${r.setup==='Trend Following'?`<div style="background:#0d0d0d;border:1px solid #222;border-radius:8px;padding:10px;margin-top:8px"><div style="font-size:10px;color:#444;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Desglose score</div><div style="font-size:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center"><span style="color:#555">40 base</span>${_rsiPts>0?`<span style="color:#4ade80">+${_rsiPts} RSI</span>`:''}<span style="color:${_volPts>0?'#4ade80':'#444'}">+${_volPts} vol (${r.volRatio.toFixed(1)}x)</span><span style="color:${_emaPts>0?'#4ade80':'#444'}">+${_emaPts} EMAs (${_emaSepPct!==null?_emaSepPct+'%':'—'})</span><span style="color:${_rangePts>0?'#4ade80':'#444'}">+${_rangePts} rango (${r.w52Pct}%)</span>${_regimePts>0?`<span style="color:#60a5fa">+${_regimePts} régimen</span>`:''}<span style="color:#fff;font-weight:600">= ${r.score}/95</span></div></div>`:''}
     ${r.earningBlocked?`<div style="background:#1a0505;border:1px solid #f8717144;border-radius:8px;padding:10px;margin-top:8px;font-size:12px;color:#f87171">🚫 Earnings ${r.earningDays===0?'HOY':r.earningDays===1?'mañana':`en ${r.earningDays} días`} (${r.earningDate}) — framework prohíbe entrar</div>`
     :r.earningCaution?`<div style="background:#1a1000;border:1px solid #fb923c44;border-radius:8px;padding:10px;margin-top:8px;font-size:12px;color:#fb923c">⚠ Earnings en ${r.earningDays} días (${r.earningDate}) — monitorear; stop más ajustado si entras</div>`:''
@@ -1300,7 +1280,7 @@ function toggleDetail(id){const el=document.getElementById(id);if(el)el.style.di
 function openAnalysis(i){
   const r=(window._fr||allResults)[i];if(!r)return;
   const zone=r.w52Val==='cheap'?`zona barata (${r.w52Pct}%)`:`zona ${r.w52Val==='mid'?'media':'cara'} (${r.w52Pct}%)`;
-  const msg=`Analiza ${r.t} (${r.n}) para swing trade hoy. Setup: ${r.setup}. Score: ${r.score}/95. Precio: $${r.price.toFixed(2)}. Target: $${r.target.toFixed(2)} (+${Math.round((r.target/r.price-1)*100)}%). Stop ATR (2x): $${r.stopLoss.toFixed(2)}. R/R: ${r.rr}:1. RSI: ${r.rsi}. EMA20: $${r.ema20?r.ema20.toFixed(2):'—'}, EMA50: $${r.ema50?r.ema50.toFixed(2):'—'}. ATR: $${r.atr?r.atr.toFixed(2):'—'}. Vol ratio: ${r.volRatio}x. Rango 52W: $${r.w52Low}–$${r.w52High} en ${zone}. Dame: 1) análisis técnico 2) catalizadores/riesgos próximos 3) niveles soporte/resistencia 4) ¿confirmas entrada aquí o esperas retroceso? 5) posición en el sector.`;
+  const msg=`Analiza ${r.t} (${r.n}) para swing trade hoy. Setup: ${r.setup}. Score: ${r.score}/95. Precio: $${r.price.toFixed(2)} (${r.priceIsLive?'vivo; barras al '+r.barDate:'cierre '+r.barDate+(r.sessionsBehind?', '+r.sessionsBehind+' sesiones de atraso':'')}). Banderas del scanner: ${(r.flags||[]).map(f=>f.code+' ('+f.msg+')').join('; ')||'ninguna'}. Target: $${r.target.toFixed(2)} (+${Math.round((r.target/r.price-1)*100)}%). Stop ATR (2x): $${r.stopLoss.toFixed(2)}. R/R: ${r.rr}:1. RSI: ${r.rsi}. EMA20: $${r.ema20?r.ema20.toFixed(2):'—'}, EMA50: $${r.ema50?r.ema50.toFixed(2):'—'}. ATR: $${r.atr?r.atr.toFixed(2):'—'}. Vol ratio: ${r.volRatio}x (último día completo / media 20). R/R real hasta máx 20d: ${r.rrLive==null?'—':r.rrLive.toFixed(2)}. Rango 52W: $${r.w52Low}–$${r.w52High} en ${zone}. Dame: 1) análisis técnico 2) catalizadores/riesgos próximos 3) niveles soporte/resistencia 4) ¿confirmas entrada aquí o esperas retroceso? 5) posición en el sector.`;
   navigator.clipboard.writeText(msg).then(()=>alert('✓ Copiado. Pégalo en Claude.')).catch(()=>alert('Copia:\n\n'+msg));
 }
 

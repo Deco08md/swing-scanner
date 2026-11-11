@@ -2,15 +2,25 @@ name: Fetch Market Data
 
 on:
   schedule:
-    - cron: '0 22 * * 1-5'  # 10pm UTC = 6pm ET Mon-Fri (after market close)
+    # GitHub delays scheduled runs (observed 2-4 h at :00), so use off-minute slots and run several times.
+    # NYSE closes 21:00 UTC (EST) / 20:00 UTC (EDT). Each run only commits if data changed.
+    - cron: '17 21 * * 1-5'   # ~16:17 ET (invierno) — primer intento tras el cierre
+    - cron: '43 22 * * 1-5'   # ~17:43 ET
+    - cron: '13 1 * * 2-6'    # ~20:13 ET del día anterior
+    - cron: '37 11 * * 1-5'   # ~06:37 ET — respaldo antes de la apertura
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: fetch-data
+  cancel-in-progress: false
+
 jobs:
   fetch-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -23,12 +33,21 @@ jobs:
         run: pip install yfinance
 
       - name: Fetch market data
+        timeout-minutes: 10
         run: python .github/scripts/fetch_data.py
+
+      - name: Fetch earnings calendar (best effort)
+        continue-on-error: true
+        timeout-minutes: 6
+        run: python .github/scripts/fetch_earnings.py
 
       - name: Commit data
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add data/
-          git diff --staged --quiet || git commit -m "datos: update $(date -u +%Y-%m-%d)"
-          git push
+          if git diff --staged --quiet; then echo "sin cambios"; exit 0; fi
+          REF=$(python -c "import json;print(json.load(open('data/manifest.json')).get('ref_date'))")
+          git commit -m "datos: barras al $REF (run $(date -u +%Y-%m-%dT%H:%MZ))"
+          for i in 1 2 3; do git pull --rebase origin main && git push && exit 0; sleep $((i*5)); done
+          exit 1

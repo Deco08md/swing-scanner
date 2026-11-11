@@ -1,134 +1,143 @@
-import yfinance as yf
 import json
 import os
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timezone
 
-TICKERS = [
-    # Mega-cap tech
-    'NVDA','AMZN','GOOGL','META','MSFT','AAPL','TSLA',
-    # Semiconductors
-    'AMD','MU','INTC','QCOM','MRVL','AVGO','ASML','AMAT','KLAC','LRCX','TXN','ADI','ON',
-    # Software / cloud / cyber
-    'CRM','ADBE','NOW','NET','PLTR','CRWD','DDOG','SNOW','ZS','PANW','OKTA','TEAM','HUBS','TTD','MDB',
-    # Consumer tech / fintech
-    'UBER','ABNB','SHOP','PYPL','COIN','SOFI','LYFT','RBLX','SNAP','PINS',
-    # Media / telecom
-    'NFLX','DIS','SPOT','TMUS',
-    # Growth / consumer
-    'ARM','ISRG','BKNG','LULU','ONON','NKE',
-    # ETFs
-    'SPY','QQQ','IWM','XLK','XLF','XLE','XLV','XLI','GLD','IBIT',
-    # Finance
-    'JPM','BAC','GS','WFC','MS','BLK','AXP','V','MA','COF','SPGI','MCO','SCHW','C','USB','PNC','BK','ICE','CME','CB',
-    # Healthcare
-    'LLY','UNH','ABBV','MRK','JNJ','ABT','DHR','BMY','GILD','REGN','VRTX','ELV','CI','HCA','TMO','SYK','BSX','MDT','AMGN',
-    # Energy
-    'XOM','CVX','COP','EOG','SLB','PSX','MPC','VLO','OXY','HAL','KMI','WMB','DVN','FANG',
-    # Industrials
-    'CAT','DE','HON','RTX','LMT','GE','UNP','FDX','UPS','CSX','BA','ETN','EMR','PH','ITW','ROK','IR',
-    # Retail / consumer staples
-    'COST','WMT','TGT','SBUX','MCD','CMG','KO','PG',
-    # LatAm
-    'MELI','CPA','TIGO',
-]
+import yfinance as yf
+
+from tickers import TICKERS
+
+REFERENCE = 'SPY'
+RETRIES = 3
 
 os.makedirs('data', exist_ok=True)
-now_utc = datetime.utcnow()
-today = now_utc.strftime('%Y-%m-%d')
+now_utc = datetime.now(timezone.utc)
+run_at = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-# Most recent expected trading day: today if after 22:00 UTC (market close + buffer), else yesterday
-expected_trading_day = today if now_utc.hour >= 22 else (now_utc - timedelta(days=1)).strftime('%Y-%m-%d')
 
-print(f"Descargando {len(TICKERS)} tickers con yfinance...")
+def to_payload(ticker, df):
+    df = df.dropna(subset=['Close'])
+    df = df[df['Close'] > 0]
+    if len(df) < 52:
+        raise ValueError(f"only {len(df)} bars")
+    df = df.tail(260)
+    return {
+        't': ticker,
+        'updated': run_at,
+        'src': 'yahoo',
+        # Split-adjusted only (no dividend adjustment) so RSI/ATR match IBKR and live quotes
+        'adjusted': 'splits',
+        'closes':  [round(float(x), 4) for x in df['Close']],
+        'highs':   [round(float(x), 4) for x in df['High']],
+        'lows':    [round(float(x), 4) for x in df['Low']],
+        'volumes': [int(x) for x in df['Volume'].fillna(0)],
+        'dates':   [d.strftime('%Y-%m-%d') for d in df.index],
+    }
 
-# Download all tickers in one batch request
+
+def download_single(ticker):
+    df = yf.Ticker(ticker).history(period='15mo', interval='1d', auto_adjust=False, actions=False)
+    if df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
+    return to_payload(ticker, df)
+
+
+def existing_last_date(ticker):
+    try:
+        with open(f"data/{ticker}.json") as f:
+            return json.load(f)['dates'][-1]
+    except Exception:
+        return None
+
+
+print(f"Descargando {len(TICKERS)} tickers con yfinance (batch, sin ajuste por dividendos)...")
 raw = yf.download(
     tickers=' '.join(TICKERS),
     period='15mo',
     interval='1d',
-    auto_adjust=True,
+    auto_adjust=False,
+    actions=False,
     group_by='ticker',
     threads=True,
     progress=False,
 )
 
-success = 0
-failed = []
-data_dates = {}  # {ticker: last_bar_date}
-
+payloads = {}
 for ticker in TICKERS:
     try:
-        if len(TICKERS) == 1:
-            df = raw
-        else:
-            df = raw[ticker]
-
-        df = df.dropna(subset=['Close'])
-        df = df[df['Close'] > 0]
-
-        if len(df) < 52:
-            raise ValueError(f"only {len(df)} bars")
-
-        df = df.tail(260)
-
-        out = {
-            't': ticker,
-            'updated': today,
-            'src': 'yahoo',
-            'closes':  [round(float(x), 4) for x in df['Close']],
-            'highs':   [round(float(x), 4) for x in df['High']],
-            'lows':    [round(float(x), 4) for x in df['Low']],
-            'volumes': [int(x) for x in df['Volume']],
-            'dates':   [d.strftime('%Y-%m-%d') for d in df.index],
-        }
-
-        last_date = out['dates'][-1]
-        data_dates[ticker] = last_date
-
-        # Warn if last bar is stale (more than 5 calendar days before expected)
-        days_diff = (datetime.strptime(expected_trading_day, '%Y-%m-%d') - datetime.strptime(last_date, '%Y-%m-%d')).days
-        stale_flag = ' ⚠ STALE' if days_diff > 5 else ''
-
-        with open(f"data/{ticker}.json", 'w') as f:
-            json.dump(out, f, separators=(',', ':'))
-
-        print(f"  {ticker} ({len(out['closes'])} bars, last={last_date}){stale_flag}")
-        success += 1
-
+        payloads[ticker] = to_payload(ticker, raw[ticker])
     except Exception as e:
-        print(f"✗ {ticker}: {e}")
+        print(f"  batch ✗ {ticker}: {e}")
+
+# The batch call returns some tickers one session behind (2026-11-10 run: ~40 of 146 stopped at 11-09).
+last_dates = [p['dates'][-1] for p in payloads.values()]
+ref_date = payloads[REFERENCE]['dates'][-1] if REFERENCE in payloads else (max(last_dates) if last_dates else None)
+print(f"Fecha de referencia ({REFERENCE}): {ref_date}")
+
+laggards = [t for t in TICKERS if t not in payloads or (ref_date and payloads[t]['dates'][-1] < ref_date)]
+print(f"{len(laggards)} tickers atrasados o fallidos en el batch: {', '.join(laggards) or '—'}")
+
+for attempt in range(1, RETRIES + 1):
+    if not laggards:
+        break
+    still = []
+    for ticker in laggards:
+        try:
+            p = download_single(ticker)
+            if ticker not in payloads or p['dates'][-1] > payloads[ticker]['dates'][-1]:
+                payloads[ticker] = p
+            if ref_date is None or p['dates'][-1] >= ref_date:
+                print(f"  retry {attempt} ✓ {ticker} last={p['dates'][-1]}")
+                continue
+            print(f"  retry {attempt} … {ticker} last={p['dates'][-1]} (ref {ref_date})")
+        except Exception as e:
+            print(f"  retry {attempt} ✗ {ticker}: {e}")
+        still.append(ticker)
+    laggards = still
+    if laggards:
+        time.sleep(5 * attempt)
+
+written, kept_older, failed, stale = 0, [], [], []
+last_by_ticker = {}
+for ticker in TICKERS:
+    p = payloads.get(ticker)
+    prev = existing_last_date(ticker)
+    if p is None:
         failed.append(ticker)
+        if prev:
+            last_by_ticker[ticker] = prev
+        print(f"✗ {ticker}: sin datos (se conserva archivo anterior: {prev or 'ninguno'})")
+        continue
+    new_last = p['dates'][-1]
+    if prev and prev > new_last:
+        kept_older.append(ticker)
+        last_by_ticker[ticker] = prev
+        print(f"  {ticker}: descarga ({new_last}) más vieja que el archivo ({prev}) — se conserva el archivo")
+        continue
+    with open(f"data/{ticker}.json", 'w') as f:
+        json.dump(p, f, separators=(',', ':'))
+    written += 1
+    last_by_ticker[ticker] = new_last
 
-print(f"\n{success}/{len(TICKERS)} ok", end='')
-if failed:
-    print(f"  |  failed: {', '.join(failed)}")
-else:
-    print()
+for ticker, last in last_by_ticker.items():
+    if ref_date and last < ref_date:
+        stale.append({'t': ticker, 'last_date': last})
 
-# Identify stale tickers (last bar older than expected by more than 1 business day)
-stale = []
-for t, d in data_dates.items():
-    try:
-        delta = (datetime.strptime(expected_trading_day, '%Y-%m-%d') - datetime.strptime(d, '%Y-%m-%d')).days
-        if delta > 3:  # > 3 calendar days is suspicious
-            stale.append({'t': t, 'last_date': d, 'days': delta})
-    except:
-        pass
+print(f"\n{written} escritos, {len(kept_older)} conservados, {len(failed)} fallidos, "
+      f"{len(stale)} atrasados vs {ref_date}")
+for s in stale:
+    print(f"  ⚠ STALE {s['t']}: last={s['last_date']} (ref {ref_date})")
 
-if stale:
-    print(f"\n⚠ {len(stale)} tickers with stale data:")
-    for s in stale:
-        print(f"  {s['t']}: last={s['last_date']} ({s['days']} days behind {expected_trading_day})")
-
-# Write manifest so scanner can display freshness info
 manifest = {
-    'run_date': today,
-    'run_time': now_utc.strftime('%H:%M:%S'),
-    'expected_trading_day': expected_trading_day,
-    'tickers_ok': success,
+    'run_at': run_at,
+    'ref_date': ref_date,
+    'reference': REFERENCE,
+    'tickers_total': len(TICKERS),
+    'tickers_written': written,
     'tickers_failed': failed,
     'stale_tickers': stale,
+    'last_dates': last_by_ticker,
+    'adjusted': 'splits',
 }
 with open('data/manifest.json', 'w') as f:
     json.dump(manifest, f, separators=(',', ':'))
-print(f"Manifest: {len(stale)} stale, {len(failed)} failed")

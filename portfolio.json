@@ -1,0 +1,20 @@
+{
+  "_nota": "Lo lee el scanner para marcar 'ya en cartera / orden pendiente / excluido'. Mantener a mano. Este archivo es público en GitHub Pages.",
+  "positions": [
+    { "t": "KO" }
+  ],
+  "orders": [
+    { "t": "ABBV", "limit": 286.40 },
+    { "t": "UPS", "limit": 108.20 },
+    { "t": "V" },
+    { "t": "BLK" },
+    { "t": "CB" },
+    { "t": "MDT" },
+    { "t": "PG" },
+    { "t": "TMO" }
+  ],
+  "exclusions": [
+    { "t": "ZS", "note": "exclusión permanente" },
+    { "t": "COST", "note": "tesis invalidada 9-jul; reevaluar solo como setup nuevo si forma base sobre 900–906" }
+  ]
+}
